@@ -1,155 +1,46 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Monki — Dashboard Ventas (Barras en miles)</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
-  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Monki Dashboard (v2)</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 </head>
 <body>
-<h1>Dashboard Ventas — Monki (miles de COP)</h1>
-<label>Fecha de corte: </label>
+<h1>Monki Dashboard (v2)</h1>
 <select id="endDate"></select>
-<div>
-  Último día: <b><span id="kpi1"></span></b> |
-  7 días: <b><span id="kpi7"></span></b> |
-  30 días: <b><span id="kpi30"></span></b>
-</div>
-<h2>Mensual</h2>
-<canvas id="chartMonthly"></canvas>
-<h2>Semanal</h2>
-<canvas id="chartWeekly"></canvas>
-
+<div>1d: <span id="kpi1"></span> | 7d: <span id="kpi7"></span> | 30d: <span id="kpi30"></span></div>
+<h2>Mensual</h2><canvas id="chartMonthly"></canvas>
+<h2>Semanal</h2><canvas id="chartWeekly"></canvas>
 <script>
 Chart.register(ChartDataLabels);
-
-const HEADERS_FILE='headers.csv';
-const DATA_FILE='reporte_utilidad.csv';
-
-function fmtDMY(d){return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();}
-function fmtMY(d){return String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();}
+const HEADERS_FILE='headers.csv',DATA_FILE='reporte_utilidad.csv';
+function fmtDMY(d){return d.toLocaleDateString('es-CO');}
+function fmtMY(d){return (d.getMonth()+1).toString().padStart(2,'0')+'/'+d.getFullYear();}
 function ymdISO(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
-function parseDate(v){
- if(v instanceof Date) return v;
- if(typeof v==='string'){
-   const m=v.match(/^(\\d{1,2})[\\/\\-](\\d{1,2})[\\/\\-](\\d{2,4})/);
-   if(m){let dd=+m[1],mm=+m[2],yy=m[3].length===2?2000+ +m[3]:+m[3];return new Date(yy,mm-1,dd);}
- }
- return null;
-}
-async function loadCSV(u){
- return new Promise((res,rej)=>{
-   Papa.parse(u+'?v='+Date.now(),{download:true,header:false,skipEmptyLines:true,
-     complete:r=>res(r.data),error:e=>rej(e)});
- });
-}
-function sumWindow(daily,endISO,days){
- const end=new Date(endISO+'T00:00:00');
- const start=new Date(end);start.setDate(end.getDate()-(days-1));
- let t=0;
- for(const[iso,val] of daily){
-   const d=new Date(iso+'T00:00:00');
-   if(d>=start&&d<=end) t+=val;
- }
- return t;
-}
-(async function main(){
- const hdr=await loadCSV(HEADERS_FILE);
- const dat=await loadCSV(DATA_FILE);
- const canonical=hdr[0].map(x=>String(x||''));
- const w=Math.max((dat[0]||[]).length,canonical.length);
+function parseDate(v){let m=String(v).match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);if(m){let dd=+m[1],mm=+m[2],yy=m[3].length===2?2000+ +m[3]:+m[3];return new Date(yy,mm-1,dd);}return null;}
+async function loadCSV(u){return new Promise((r,j)=>Papa.parse(u+'?v='+Date.now(),{download:true,header:false,skipEmptyLines:true,complete:x=>r(x.data),error:e=>j(e)}));}
+function sumWindow(daily,endISO,days){let end=new Date(endISO),start=new Date(end);start.setDate(end.getDate()-(days-1));let t=0;for(let[k,v]of daily){let d=new Date(k);if(d>=start&&d<=end)t+=v;}return t;}
+(async()=>{
+ let hdr=await loadCSV(HEADERS_FILE),dat=await loadCSV(DATA_FILE);
+ let canonical=hdr[0].map(x=>String(x||'')),w=Math.max((dat[0]||[]).length,canonical.length);
  dat[0]=Array.from({length:w},(_,i)=>canonical[i]??dat[0][i]??('col'+(i+1)));
- const H=dat[0];
- const rows=dat.slice(1).map(r=>{const o={};H.forEach((h,i)=>o[h]=r[i]);return o;});
- const dateKey=H.find(h=>/fecha|date/i.test(h))||H[0];
- const salesKey=H.find(h=>/total/i.test(h))||H[1];
- const dailyMap=new Map();
- for(const r of rows){
-   const d=parseDate(r[dateKey]);if(!d)continue;
-   let v=r[salesKey];
-   if(typeof v==='string')v=Number(v.replace(/[^0-9.-]/g,''));
-   if(!isFinite(v))continue;
-   const k=ymdISO(d);
-   dailyMap.set(k,(dailyMap.get(k)||0)+v);
- }
- const daily=[...dailyMap.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
- if(!daily.length){alert("No data");return;}
- const sel=document.getElementById('endDate');
- daily.forEach(([iso])=>{
-   const d=new Date(iso+'T00:00:00');
-   const o=document.createElement('option');
-   o.value=iso;o.textContent=fmtDMY(d);
-   sel.appendChild(o);
- });
- sel.value=daily[daily.length-1][0];
- function refreshKPIs(){
-   const end=sel.value;
-   kpi1.textContent=(sumWindow(daily,end,1 )/1000).toLocaleString('es-CO');
-   kpi7.textContent=(sumWindow(daily,end,7 )/1000).toLocaleString('es-CO');
-   kpi30.textContent=(sumWindow(daily,end,30)/1000).toLocaleString('es-CO');
- }
- refreshKPIs();
- sel.addEventListener('change',refreshKPIs);
- function buildMonthly(){
-  const m=new Map();
-  for(const[iso,val] of daily){
-    const d=new Date(iso+'T00:00:00');
-    const k=ymdISO(new Date(d.getFullYear(),d.getMonth(),1));
-    m.set(k,(m.get(k)||0)+val);
-  }
-  return [...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
- }
- function monday(d){
-  const day=d.getDay(),diff=(day===0?-6:1-day);
-  const m=new Date(d);m.setDate(d.getDate()+diff);m.setHours(0,0,0,0);return m;
- }
- function buildWeekly(){
-  const m=new Map();
-  for(const[iso,val] of daily){
-    const d=new Date(iso+'T00:00:00');
-    const mon=ymdISO(monday(d));
-    m.set(mon,(m.get(mon)||0)+val);
-  }
-  return [...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
- }
- const monthly=buildMonthly();
- const weekly=buildWeekly();
- new Chart(chartMonthly,{
-  type:'bar',
-  data:{
-    labels:monthly.map(e=>fmtMY(new Date(e[0]+'T00:00:00'))),
-    datasets:[{
-      data:monthly.map(e=>e[1]/1000),
-      backgroundColor:'#4ade80'
-    }]
-  },
-  options:{
-    plugins:{
-      legend:{display:false},
-      datalabels:{anchor:'end',align:'end',formatter:v=>v.toLocaleString('es-CO')}
-    },
-    scales:{y:{beginAtZero:true}}
-  }
- });
- new Chart(chartWeekly,{
-  type:'bar',
-  data:{
-    labels:weekly.map(e=>fmtDMY(new Date(e[0]+'T00:00:00'))),
-    datasets:[{
-      data:weekly.map(e=>e[1]/1000),
-      backgroundColor:'#60a5fa'
-    }]
-  },
-  options:{
-    plugins:{
-      legend:{display:false},
-      datalabels:{anchor:'end',align:'end',formatter:v=>v.toLocaleString('es-CO')}
-    },
-    scales:{y:{beginAtZero:true}}
-  }
- });
+ let H=dat[0],rows=dat.slice(1).map(r=>{let o={};H.forEach((h,i)=>o[h]=r[i]);return o;});
+ let dateKey=H.find(h=>/fecha|date/i.test(h))||H[0],salesKey=H.find(h=>/total/i.test(h))||H[1];
+ let dailyMap=new Map();
+ for(let r of rows){let d=parseDate(r[dateKey]);if(!d)continue;let v=r[salesKey];if(typeof v==='string')v=Number(v.replace(/[^0-9.-]/g,''));if(!isFinite(v))continue;let k=ymdISO(d);dailyMap.set(k,(dailyMap.get(k)||0)+v);}
+ let daily=[...dailyMap.entries()].sort((a,b)=>a[0].localeCompare(b[0]));if(!daily.length){alert('No data');return;}
+ let sel=document.getElementById('endDate');daily.forEach(([k])=>{let d=new Date(k);let o=document.createElement('option');o.value=k;o.textContent=fmtDMY(d);sel.appendChild(o);});sel.value=daily[daily.length-1][0];
+ function refreshKPIs(){let end=sel.value;kpi1.textContent=(sumWindow(daily,end,1)/1000).toLocaleString('es-CO');kpi7.textContent=(sumWindow(daily,end,7)/1000).toLocaleString('es-CO');kpi30.textContent=(sumWindow(daily,end,30)/1000).toLocaleString('es-CO');}
+ refreshKPIs();sel.addEventListener('change',refreshKPIs);
+ function buildMonthly(){let m=new Map();for(let[k,v]of daily){let d=new Date(k);let kk=ymdISO(new Date(d.getFullYear(),d.getMonth(),1));m.set(kk,(m.get(kk)||0)+v);}return [...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));}
+ function monday(d){let day=d.getDay(),diff=(day===0?-6:1-day);let m=new Date(d);m.setDate(d.getDate()+diff);m.setHours(0,0,0,0);return m;}
+ function buildWeekly(){let m=new Map();for(let[k,v]of daily){let d=new Date(k);let mon=ymdISO(monday(d));m.set(mon,(m.get(mon)||0)+v);}return [...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));}
+ let monthly=buildMonthly(),weekly=buildWeekly();
+ new Chart(chartMonthly,{type:'bar',data:{labels:monthly.map(e=>fmtMY(new Date(e[0]))),datasets:[{data:monthly.map(e=>e[1]/1000),backgroundColor:'#4ade80'}]},options:{plugins:{legend:{display:false},datalabels:{anchor:'end',align:'end',formatter:v=>v.toLocaleString('es-CO')}},scales:{y:{beginAtZero:true}}}});
+ new Chart(chartWeekly,{type:'bar',data:{labels:weekly.map(e=>fmtDMY(new Date(e[0]))),datasets:[{data:weekly.map(e=>e[1]/1000),backgroundColor:'#60a5fa'}]},options:{plugins:{legend:{display:false},datalabels:{anchor:'end',align:'end',formatter:v=>v.toLocaleString('es-CO')}},scales:{y:{beginAtZero:true}}}});
 })();
 </script>
 </body>
