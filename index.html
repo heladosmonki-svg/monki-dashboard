@@ -34,7 +34,7 @@
 
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <!-- PapaParse for robust CSV parsing (auto delimiter detection, quoted fields, etc.) -->
+  <!-- PapaParse for robust CSV parsing -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 </head>
 <body>
@@ -67,9 +67,18 @@
       </div>
     </div>
 
+    <!-- Monthly chart FIRST -->
     <div class="card chart-card">
-      <div class="kpi-title">Ventas diarias</div>
-      <canvas id="chart"></canvas>
+      <div class="kpi-title">Ventas mensuales</div>
+      <canvas id="chartMonthly"></canvas>
+      <div class="legend">Agregado por mes calendario (YYYY-MM).</div>
+    </div>
+
+    <!-- Weekly chart SECOND (Mon–Sun) -->
+    <div class="card chart-card">
+      <div class="kpi-title">Ventas semanales (lunes a domingo)</div>
+      <canvas id="chartWeekly"></canvas>
+      <div class="legend">La semana inicia el lunes y termina el domingo.</div>
     </div>
 
     <div class="card" style="margin-top:16px;">
@@ -87,7 +96,6 @@
   const HEADERS_FILE = 'headers.csv';
   const DATA_FILE    = 'reporte_utilidad.csv';
 
-  // After header replacement, try these keys. Default sales uses the line-total incl. taxes: total_purchase_per_product.
   const DATE_KEY_CANDIDATES  = ['date','fecha','fecha_creacion','fecha creación'];
   const SALES_KEY_CANDIDATES = ['total_purchase_per_product','total','total_gross','total.1','total_purchase'];
 
@@ -107,15 +115,10 @@
     if(v instanceof Date) return v;
     if(typeof v==='number') return new Date(v);
     if(typeof v==='string'){
-      // Try ISO/US first
       let t=Date.parse(v);
       if(!isNaN(t)) return new Date(t);
-      // Try DD/MM/YYYY
       const m=v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-      if(m){
-        const d=Number(m[1]), mo=Number(m[2]), y=Number(m[3]);
-        return new Date(y, mo-1, d);
-      }
+      if(m){ const d=+m[1], mo=+m[2], y=+m[3]; return new Date(y,mo-1,d); }
     }
     return null;
   }
@@ -155,10 +158,40 @@
       if(!d) continue;
       let v=r[salesKey];
       if(v==null) continue;
-      if(typeof v==='string') v=Number(v.replace(/[^0-9.-]/g,'')); // strip $ and thousand separators
+      if(typeof v==='string') v=Number(v.replace(/[^0-9.-]/g,''));
       if(!isFinite(v)) continue;
       const ds=ymd(new Date(d.getFullYear(),d.getMonth(),d.getDate()));
       m.set(ds,(m.get(ds)||0)+v);
+    }
+    return [...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
+  }
+
+  function getMonday(d) {
+    const day = d.getDay();
+    const diff = (day === 0 ? -6 : 1 - day);
+    const monday = new Date(d);
+    monday.setDate(d.getDate() + diff);
+    monday.setHours(0,0,0,0);
+    return monday;
+  }
+
+  function buildWeeklyFromDaily(dailyEntries){
+    const m=new Map();
+    for(const [ds, val] of dailyEntries){
+      const d=new Date(ds+'T00:00:00');
+      const mon=getMonday(d);
+      const key=ymd(mon);
+      m.set(key,(m.get(key)||0)+val);
+    }
+    return [...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
+  }
+
+  function buildMonthlyFromDaily(dailyEntries){
+    const m=new Map();
+    for(const [ds, val] of dailyEntries){
+      const d=new Date(ds+'T00:00:00');
+      const key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+      m.set(key,(m.get(key)||0)+val);
     }
     return [...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
   }
@@ -187,26 +220,39 @@
     document.getElementById('lastDate').textContent=entries.length?'Última fecha: '+entries[entries.length-1][0]:'';
   }
 
-  let chart;
-  function renderChart(entries){
-    const ctx=document.getElementById('chart');
+  let chartMonthly, chartWeekly;
+  function renderMonthly(entries){
+    const ctx=document.getElementById('chartMonthly');
     const labels=entries.map(e=>e[0]);
     const data  =entries.map(e=>e[1]);
-    if(chart) chart.destroy();
-    chart=new Chart(ctx,{
+    if(chartMonthly) chartMonthly.destroy();
+    chartMonthly=new Chart(ctx,{
       type:'line',
-      data:{labels,datasets:[{label:'Ventas diarias (COP)',data,tension:0.2}]},
+      data:{labels,datasets:[{label:'Ventas mensuales (COP)',data,tension:0.2}]},
       options:{responsive:true,plugins:{legend:{display:false}},scales:{
-        x:{ticks:{autoSkip:true,maxTicksLimit:10}},y:{beginAtZero:true}
+        x:{ticks:{autoSkip:true,maxTicksLimit:12}},y:{beginAtZero:true}
+      }}
+    });
+  }
+  function renderWeekly(entries){
+    const ctx=document.getElementById('chartWeekly');
+    const labels=entries.map(e=>e[0]);
+    const data  =entries.map(e=>e[1]);
+    if(chartWeekly) chartWeekly.destroy();
+    chartWeekly=new Chart(ctx,{
+      type:'line',
+      data:{labels,datasets:[{label:'Ventas semanales (COP)',data,tension:0.2}]},
+      options:{responsive:true,plugins:{legend:{display:false}},scales:{
+        x:{ticks:{autoSkip:true,maxTicksLimit:20}},y:{beginAtZero:true}
       }}
     });
   }
 
-  function refreshKpis(entries){
+  function refreshKpis(dailyEntries){
     const endStr=document.getElementById('endDate').value;
-    document.getElementById('kpi1').textContent = fmtCOP(sumWindow(entries,endStr,1));
-    document.getElementById('kpi7').textContent = fmtCOP(sumWindow(entries,endStr,7));
-    document.getElementById('kpi30').textContent= fmtCOP(sumWindow(entries,endStr,30));
+    document.getElementById('kpi1').textContent = fmtCOP(sumWindow(dailyEntries,endStr,1));
+    document.getElementById('kpi7').textContent = fmtCOP(sumWindow(dailyEntries,endStr,7));
+    document.getElementById('kpi30').textContent= fmtCOP(sumWindow(dailyEntries,endStr,30));
   }
 
   function parseCSV(url){
@@ -228,23 +274,40 @@
       if(!hdrRows.length) throw new Error('headers.csv está vacío.');
       if(!dataRows.length) throw new Error('reporte_utilidad.csv está vacío.');
 
-      replaceHeaders(dataRows, hdrRows[0]);
-      const rows = aoaToObjects(dataRows);
+      const canonical = hdrRows[0].map(x=>(x??'').toString());
+      if(!canonical.length) throw new Error('La primera fila de headers.csv está vacía.');
+      // replace data header row by position
+      const width = Math.max((dataRows[0]||[]).length, canonical.length);
+      const newH = Array.from({length: width}, (_,i)=> canonical[i] ?? (dataRows[0]||[])[i] ?? ('col'+(i+1)));
+      dataRows[0] = newH;
+
+      const rows = (function(rows){
+        const headers = rows[0].map(h=>(h??'').toString());
+        return rows.slice(1).map(r=>{
+          const o={}; headers.forEach((h,i)=>o[h]=r[i]); return o;
+        });
+      })(dataRows);
+
       const headers = Object.keys(rows[0]||{});
       const dateKey  = findKey(headers, DATE_KEY_CANDIDATES)  || headers[0];
       const salesKey = findKey(headers, SALES_KEY_CANDIDATES) || headers.find(h=>String(h).toLowerCase().includes('total')) || headers[1];
 
-      const entries = buildDaily(rows,dateKey,salesKey);
-      if(!entries.length){ setStatus('No se encontraron filas con datos válidos.', 'warn'); return; }
+      const dailyEntries = buildDaily(rows,dateKey,salesKey);
+      if(!dailyEntries.length){ setStatus('No se encontraron filas con datos válidos.', 'warn'); return; }
 
-      populateDates(entries);
-      renderChart(entries);
-      refreshKpis(entries);
-      document.getElementById('endDate').addEventListener('change', ()=>refreshKpis(entries));
+      populateDates(dailyEntries);
+      refreshKpis(dailyEntries);
+      document.getElementById('endDate').addEventListener('change', ()=>refreshKpis(dailyEntries));
+
+      const monthlyEntries = buildMonthlyFromDaily(dailyEntries);
+      const weeklyEntries  = buildWeeklyFromDaily(dailyEntries);
+
+      renderMonthly(monthlyEntries);
+      renderWeekly(weeklyEntries);
 
       setStatus('OK', 'ok');
       log('Headers usados:', headers.join(' | '));
-      log('Columna fecha →', dateKey, ' • Columna ventas →', salesKey);
+      log('Fecha:', dateKey, ' • Ventas:', salesKey);
     }catch(e){
       setStatus('Error: '+e.message, 'err');
       log('Error:', e.stack || e.message);
