@@ -5,11 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Monki — Dashboard Ventas (Barras en miles)</title>
 
-  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <!-- Data labels plugin -->
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
-  <!-- Papaparse -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
   <style>
@@ -21,8 +18,15 @@
     h1 { margin-top: 0; }
     select { padding: 6px 10px; }
     .kpis { display: flex; gap: 16px; margin: 20px 0; }
-    .kpi-box { background:#111827; padding:14px; border-radius:10px; border:1px solid #1f2937; }
-    canvas { background:#111827; border-radius:10px; padding:10px; }
+    .kpi-box {
+      background:#111827; padding:14px; border-radius:10px;
+      border:1px solid #1f2937;
+    }
+    canvas {
+      background:#111827;
+      border-radius:10px;
+      padding:10px;
+    }
   </style>
 </head>
 
@@ -64,7 +68,9 @@ function fmtMY(d){
   return String(d.getMonth()+1).padStart(2,'0') + '/' + d.getFullYear();
 }
 function ymdISO(d){
-  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  return d.getFullYear() + '-' +
+         String(d.getMonth()+1).padStart(2,'0') + '-' +
+         String(d.getDate()).padStart(2,'0');
 }
 function parseDate(v){
   if(v instanceof Date) return v;
@@ -107,12 +113,13 @@ function sumWindow(daily,endISO,days){
   dat[0] = Array.from({length:width},(_,i)=>canonical[i] ?? dat[0][i] ?? ('col'+(i+1)));
 
   const headers = dat[0];
-  const rows = dat.slice(1).map(r=>{ const o={}; headers.forEach((h,i)=>o[h]=r[i]); return o; });
+  const rows = dat.slice(1).map(r=>{
+    const o={}; headers.forEach((h,i)=>o[h]=r[i]); return o;
+  });
 
   const dateKey  = headers.find(h=>/fecha|date/i.test(h)) || headers[0];
   const salesKey = headers.find(h=>/total/i.test(h))     || headers[1];
 
-  // Build daily totals
   const dailyMap=new Map();
   for(const r of rows){
     const d=parseDate(r[dateKey]);
@@ -126,7 +133,6 @@ function sumWindow(daily,endISO,days){
   const daily=[...dailyMap.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
   if(!daily.length){ alert("No data"); return; }
 
-  // End date selector
   const sel=document.getElementById('endDate');
   daily.forEach(([iso])=>{
     const d=new Date(iso+'T00:00:00');
@@ -145,7 +151,6 @@ function sumWindow(daily,endISO,days){
   refreshKPIs();
   sel.addEventListener('change', refreshKPIs);
 
-  // Aggregations
   function buildMonthly(){
     const m=new Map();
     for(const[iso,val] of daily){
