@@ -11,6 +11,7 @@
       margin: 0; padding: 24px;
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
       background: linear-gradient(180deg, #0b1220, #0f172a); color: var(--text);
+      display: flex; /* Ensure page layout uses sidebar + content side-by-side */
     }
     .container { max-width: 1100px; margin: 0 auto; }
     h1 { font-size: 28px; margin: 0 0 6px; }
@@ -30,6 +31,12 @@
     .ok   { color: #34d399; }
     pre.log { background:#0b1220; border:1px solid #1f2937; padding:10px; border-radius:10px; color:#cbd5e1; overflow:auto }
     @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+    .sidebar {width: 200px; background: #111827;  border-right: 1px solid #1f2937;  padding: 20px;  min-height: 100vh;}
+    .sidebar h2 {  margin-top: 0;  font-size: 20px;}
+    .menu-item {  margin: 10px 0;}
+    .menu-item a {  color: var(--text);  text-decoration: none;  font-size: 16px;}
+    .menu-item a:hover {  text-decoration: underline; }
+
   </style>
 
   <!-- Chart.js -->
@@ -38,56 +45,64 @@
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 </head>
 <body>
+  <!-- ✅ LEFT SIDEBAR MENU -->
+  <nav class="sidebar">
+    <h2>Monki</h2>
+    <div class="menu-item"><a href="index.html">🏠 Home</a></div>
+    <div class="menu-item"><a href="sales.html">📊 Sales Dashboard</a></div>
+  </nav>
   <div class="container">
-    <h1>Dashboard de Ventas — Monki (CSV, barras simples)</h1>
-    <div class="subtitle">
-      <strong>headers.csv</strong> (primera fila = encabezados canónicos por posición) +
-      <strong>reporte_utilidad.csv</strong> (datos). Reemplaza headers por posición y calcula totales de <b>1</b>, <b>7</b> y <b>30</b> días.
-    </div>
-
-    <div class="controls">
-      <label for="endDate">Fecha de corte:</label>
-      <select id="endDate"></select>
-      <span id="lastDate" class="legend"></span>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <div class="kpi-title">Total ventas último día</div>
-        <div id="kpi1" class="kpi-value">$0</div>
+    <div class="container">
+      <h1>Dashboard de Ventas — Monki (CSV, barras simples)</h1>
+      <div class="subtitle">
+        <strong>headers.csv</strong> (primera fila = encabezados canónicos por posición) +
+        <strong>reporte_utilidad.csv</strong> (datos). Reemplaza headers por posición y calcula totales de <b>1</b>, <b>7</b> y <b>30</b> días.
       </div>
-      <div class="card">
-        <div class="kpi-title">Total ventas últimos 7 días</div>
-        <div id="kpi7" class="kpi-value">$0</div>
+  
+      <div class="controls">
+        <label for="endDate">Fecha de corte:</label>
+        <select id="endDate"></select>
+        <span id="lastDate" class="legend"></span>
       </div>
-      <div class="card">
-        <div class="kpi-title">Total ventas últimos 30 días</div>
-        <div id="kpi30" class="kpi-value">$0</div>
+  
+      <div class="grid">
+        <div class="card">
+          <div class="kpi-title">Total ventas último día</div>
+          <div id="kpi1" class="kpi-value">$0</div>
+        </div>
+        <div class="card">
+          <div class="kpi-title">Total ventas últimos 7 días</div>
+          <div id="kpi7" class="kpi-value">$0</div>
+        </div>
+        <div class="card">
+          <div class="kpi-title">Total ventas últimos 30 días</div>
+          <div id="kpi30" class="kpi-value">$0</div>
+        </div>
       </div>
-    </div>
-
-    <!-- Monthly bar chart FIRST -->
-    <div class="card chart-card">
-      <div class="kpi-title">Ventas mensuales</div>
-      <canvas id="chartMonthly"></canvas>
-      <div class="legend">Agregado por mes calendario (<code>MM/YYYY</code>).</div>
-    </div>
-
-    <!-- Weekly bar chart SECOND (Mon–Sun) -->
-    <div class="card chart-card">
-      <div class="kpi-title">Ventas semanales (lunes a domingo)</div>
-      <canvas id="chartWeekly"></canvas>
-      <div class="legend">Etiqueta = lunes de cada semana (<code>DD/MM/YYYY</code>).</div>
-    </div>
-
-    <div class="card" style="margin-top:16px;">
-      <div class="kpi-title">Estado</div>
-      <div id="status" class="legend"></div>
-      <pre id="log" class="log"></pre>
-    </div>
-
-    <div class="footer">
-      Estructura: <code>index.html</code>, <code>headers.csv</code>, <code>reporte_utilidad.csv</code>.
+  
+      <!-- Monthly bar chart FIRST -->
+      <div class="card chart-card">
+        <div class="kpi-title">Ventas mensuales</div>
+        <canvas id="chartMonthly"></canvas>
+        <div class="legend">Agregado por mes calendario (<code>MM/YYYY</code>).</div>
+      </div>
+  
+      <!-- Weekly bar chart SECOND (Mon–Sun) -->
+      <div class="card chart-card">
+        <div class="kpi-title">Ventas semanales (lunes a domingo)</div>
+        <canvas id="chartWeekly"></canvas>
+        <div class="legend">Etiqueta = lunes de cada semana (<code>DD/MM/YYYY</code>).</div>
+      </div>
+  
+      <div class="card" style="margin-top:16px;">
+        <div class="kpi-title">Estado</div>
+        <div id="status" class="legend"></div>
+        <pre id="log" class="log"></pre>
+      </div>
+  
+      <div class="footer">
+        Estructura: <code>index.html</code>, <code>headers.csv</code>, <code>reporte_utilidad.csv</code>.
+      </div>
     </div>
   </div>
 
