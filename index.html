@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monki — Dashboard de Ventas</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #111827;
+      --muted: #94a3b8;
+      --text: #e5e7eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 24px;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      background: linear-gradient(180deg, #0b1220, #0f172a);
+      color: var(--text);
+    }
+    .container { max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 28px; margin: 0 0 6px; }
+    .subtitle { color: var(--muted); margin-bottom: 20px; }
+    .controls {
+      display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap;
+    }
+    select {
+      background: var(--card); color: var(--text); border: 1px solid #1f2937; padding: 8px 10px; border-radius: 10px;
+    }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .card {
+      background: var(--card);
+      border: 1px solid #1f2937; padding: 16px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.25);
+      min-height: 100px;
+    }
+    .kpi-title { color: var(--muted); font-size: 13px; letter-spacing: .3px; }
+    .kpi-value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+    .legend { color: var(--muted); font-size: 12px; margin-top: 6px; }
+    .chart-card { margin-top: 18px; }
+    .footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
+    canvas { width: 100% !important; height: auto !important; }
+    .warn { color: #fbbf24; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Dashboard de Ventas — Monki</h1>
+    <div class="subtitle">Este panel lee <code>reporte_utilidad.xlsx</code> desde el mismo folder y calcula totales de <strong>1</strong>, <strong>7</strong> y <strong>30</strong> días.</div>
+
+    <div class="controls">
+      <label for="endDate">Fecha de corte:</label>
+      <select id="endDate"></select>
+      <span id="lastDate" class="legend"></span>
+      <span id="status" class="legend"></span>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="kpi-title">Total ventas último día</div>
+        <div id="kpi1" class="kpi-value">$0</div>
+        <div class="legend">Incluye impuestos (bruto, columna <code>Total.1</code>)</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Total ventas últimos 7 días</div>
+        <div id="kpi7" class="kpi-value">$0</div>
+        <div class="legend">Incluye impuestos (bruto)</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Total ventas últimos 30 días</div>
+        <div id="kpi30" class="kpi-value">$0</div>
+        <div class="legend">Incluye impuestos (bruto)</div>
+      </div>
+    </div>
+
+    <div class="card chart-card">
+      <div class="kpi-title">Ventas diarias</div>
+      <canvas id="chart"></canvas>
+      <div class="legend">Si no ves datos, valida los encabezados: <code>Fecha Creación</code> y <code>Total.1</code>.</div>
+    </div>
+
+    <div class="footer">
+      Fuente: <code>reporte_utilidad.xlsx</code>. Este sitio es estático (GitHub Pages). Para actualizar, sube un Excel nuevo con el mismo nombre/encabezados.
+    </div>
+  </div>
+
+  <!-- SheetJS to read Excel in the browser -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.20.0/dist/xlsx.full.min.js"></script>
+  <!-- Chart.js for the simple line chart -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <script>
+    const EXCEL_FILE = 'reporte_utilidad.xlsx';
+    const DATE_COL = 'Fecha Creación';
+    const SALES_COL = 'Total.1';
+
+    const fmtCOP = (v) => new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(v || 0);
+
+    function ymd(d) {
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    }
+
+    function parseDate(val) {
+      // Accept Date, Excel serial, or string
+      if (val instanceof Date) return val;
+      if (typeof val === 'number') { // Excel serial days
+        // Excel's epoch (assuming 1900-based)
+        const epoch = new Date(Date.UTC(1899, 11, 30));
+        const ms = val * 24 * 60 * 60 * 1000;
+        return new Date(epoch.getTime() + ms);
+      }
+      if (typeof val === 'string') {
+        // Try to parse ISO-like first
+        const t = Date.parse(val);
+        if (!isNaN(t)) return new Date(t);
+        // Fallback: try split for "YYYY-MM-DD HH:MM:SS" or "DD/MM/YYYY"
+        const m1 = val.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (m1) return new Date(`${m1[1]}-${m1[2]}-${m1[3]}T00:00:00`);
+        const m2 = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        if (m2) return new Date(`${m2[3]}-${m2[2].padStart(2,'0')}-${m2[1].padStart(2,'0')}T00:00:00`);
+      }
+      return null;
+    }
+
+    async function loadExcel() {
+      const status = document.getElementById('status');
+      status.textContent = 'Cargando Excel…';
+      const resp = await fetch(EXCEL_FILE, { cache: 'no-store' });
+      if (!resp.ok) {
+        status.innerHTML = `<span class="warn">No se pudo cargar <code>${EXCEL_FILE}</code> (${resp.status}).</span>`;
+        return [];
+      }
+      const buf = await resp.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+      const firstSheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: null });
+      status.textContent = '';
+      return rows;
+    }
+
+    function buildDaily(rows) {
+      const daily = new Map(); // dateStr -> sum
+      for (const r of rows) {
+        const d = parseDate(r[DATE_COL]);
+        let v = r[SALES_COL];
+        if (d == null) continue;
+        if (v == null) continue;
+        // Coerce numeric
+        if (typeof v === 'string') {
+          v = Number(v.replace(/[^\d.-]/g, ''));
+        }
+        if (!isFinite(v)) continue;
+        const ds = ymd(new Date(d.getFullYear(), d.getMonth(), d.getDate()));
+        daily.set(ds, (daily.get(ds) || 0) + v);
+      }
+      // Sort to arrays
+      const entries = Array.from(daily.entries()).sort((a,b) => (a[0] < b[0] ? -1 : 1));
+      return entries; // [ [dateStr, total], ... ]
+    }
+
+    function sumWindow(entries, endStr, days) {
+      const end = new Date(endStr + 'T00:00:00');
+      const start = new Date(end); start.setDate(end.getDate() - (days - 1));
+      let sum = 0;
+      for (const [ds, v] of entries) {
+        const d = new Date(ds + 'T00:00:00');
+        if (d >= start && d <= end) sum += v;
+      }
+      return sum;
+    }
+
+    function populateDates(entries) {
+      const sel = document.getElementById('endDate');
+      sel.innerHTML = '';
+      for (const [ds] of entries) {
+        const opt = document.createElement('option');
+        opt.value = ds; opt.textContent = ds;
+        sel.appendChild(opt);
+      }
+      if (entries.length) sel.value = entries[entries.length - 1][0];
+      document.getElementById('lastDate').textContent = entries.length ? `Última fecha: ${entries[entries.length - 1][0]}` : '';
+    }
+
+    let chart;
+    function renderChart(entries) {
+      const ctx = document.getElementById('chart');
+      const labels = entries.map(e => e[0]);
+      const data = entries.map(e => e[1]);
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets: [{ label: 'Ventas diarias (COP)', data, tension: 0.2 }]},
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { autoSkip: true, maxTicksLimit: 10 } },
+            y: { beginAtZero: true }
+          }
+        }
+      });
+    }
+
+    function refreshKpis(entries) {
+      const endStr = document.getElementById('endDate').value;
+      document.getElementById('kpi1').textContent  = fmtCOP(sumWindow(entries, endStr, 1));
+      document.getElementById('kpi7').textContent  = fmtCOP(sumWindow(entries, endStr, 7));
+      document.getElementById('kpi30').textContent = fmtCOP(sumWindow(entries, endStr, 30));
+    }
+
+    (async function init() {
+      const rows = await loadExcel();
+      const entries = buildDaily(rows);
+      populateDates(entries);
+      renderChart(entries);
+      refreshKpis(entries);
+      document.getElementById('endDate').addEventListener('change', () => refreshKpis(entries));
+    })();
+  </script>
+</body>
+</html>
