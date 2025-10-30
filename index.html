@@ -1,1 +1,530 @@
-Updated index.html with bar chart types. Replace chart type from 'line' to 'bar' in both monthly and weekly charts.
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monki — Dashboard de Ventas (CSV, Barras Mejoradas)</title>
+  <style>
+    :root { --bg:#0f172a; --card:#111827; --muted:#94a3b8; --text:#e5e7eb; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 24px;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      background: linear-gradient(180deg, #0b1220, #0f172a); color: var(--text);
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { font-size: 28px; margin: 0 0 6px; }
+    .subtitle { color: var(--muted); margin-bottom: 20px; }
+    .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+    .controls input { background: var(--card); color: var(--text); border: 1px solid #1f2937; padding: 8px 10px; border-radius: 10px; width: 160px; }
+    .controls label { color: var(--muted); font-size: 14px; }
+    select { background: var(--card); color: var(--text); border: 1px solid #1f2937; padding: 8px 10px; border-radius: 10px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .card { background: var(--card); border: 1px solid #1f2937; padding: 16px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.25); min-height: 100px; }
+    .kpi-title { color: var(--muted); font-size: 13px; letter-spacing: .3px; }
+    .kpi-value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+    .legend { color: var(--muted); font-size: 12px; margin-top: 6px; }
+    .chart-card { margin-top: 18px; }
+    .footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
+    canvas { width: 100% !important; height: auto !important; }
+    .warn { color: #fbbf24; }
+    .err  { color: #f87171; }
+    .ok   { color: #34d399; }
+    pre.log { background:#0b1220; border:1px solid #1f2937; padding:10px; border-radius:10px; color:#cbd5e1; overflow:auto }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .row { display:flex; gap:16px; flex-wrap:wrap; }
+    .flex-1 { flex:1 1 480px; }
+  </style>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- PapaParse for robust CSV parsing -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h1>Dashboard de Ventas — Monki (CSV, barras mejoradas)</h1>
+    <div class="subtitle">
+      <strong>headers.csv</strong> (primera fila = encabezados canónicos por posición) +
+      <strong>reporte_utilidad.csv</strong> (datos). Reemplazamos headers por posición, agregamos KPIs y dos gráficos: <b>mensual</b> y <b>semanal (lun–dom)</b>.
+    </div>
+
+    <div class="controls">
+      <label>Fecha de corte:</label>
+      <select id="endDate"></select>
+      <span id="lastDate" class="legend"></span>
+
+      <label>Objetivo mensual (COP):</label>
+      <input id="targetMonthly" type="number" placeholder="Ej: 30000000" />
+      <label>Objetivo semanal (COP):</label>
+      <input id="targetWeekly" type="number" placeholder="Ej: 7000000" />
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="kpi-title">Total ventas último día</div>
+        <div id="kpi1" class="kpi-value">$0</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Total ventas últimos 7 días</div>
+        <div id="kpi7" class="kpi-value">$0</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Total ventas últimos 30 días</div>
+        <div id="kpi30" class="kpi-value">$0</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <!-- Monthly chart FIRST -->
+      <div class="card chart-card flex-1">
+        <div class="kpi-title">Ventas mensuales</div>
+        <canvas id="chartMonthly"></canvas>
+        <div class="legend">Barras = ventas del mes. Línea = objetivo y promedio.</div>
+      </div>
+
+      <!-- Weekly chart SECOND (Mon–Sun) -->
+      <div class="card chart-card flex-1">
+        <div class="kpi-title">Ventas semanales (lunes a domingo)</div>
+        <canvas id="chartWeekly"></canvas>
+        <div class="legend">Barras = ventas de la semana (lunes). Línea = objetivo y promedio.</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="kpi-title">Estado</div>
+      <div id="status" class="legend"></div>
+      <pre id="log" class="log"></pre>
+    </div>
+
+    <div class="footer">
+      Estructura: <code>index.html</code>, <code>headers.csv</code>, <code>reporte_utilidad.csv</code>.
+    </div>
+  </div>
+
+<script>
+  const HEADERS_FILE = 'headers.csv';
+  const DATA_FILE    = 'reporte_utilidad.csv';
+
+  const DATE_KEY_CANDIDATES  = ['date','fecha','fecha_creacion','fecha creación'];
+  const SALES_KEY_CANDIDATES = ['total_purchase_per_product','total','total_gross','total.1','total_purchase'];
+
+  const statusDiv = document.getElementById('status');
+  const logEl     = document.getElementById('log');
+  const log       = (...a) => logEl.textContent += a.join(' ') + '\\n';
+  const setStatus = (t,c='') => { statusDiv.innerHTML=t; statusDiv.className='legend '+c; };
+
+  const fmtCOP = v => new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0}).format(v||0);
+
+  function fmtDMY(d){
+    const dd=String(d.getDate()).padStart(2,'0');
+    const mm=String(d.getMonth()+1).padStart(2,'0');
+    const yyyy=d.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  }
+  function fmtMY(d){
+    const mm=String(d.getMonth()+1).padStart(2,'0');
+    const yyyy=d.getFullYear();
+    return `${mm}/${yyyy}`;
+  }
+  function ymdISO(d){
+    const yyyy=d.getFullYear();
+    const mm=String(d.getMonth()+1).padStart(2,'0');
+    const dd=String(d.getDate()).padStart(2,'0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  function parseDateDMYFirst(v){
+    if(v instanceof Date) return v;
+    if(typeof v==='number') return new Date(v);
+    if(typeof v==='string'){
+      const s = v.trim();
+      const m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+      if(m){
+        let dd = parseInt(m[1],10);
+        let mm = parseInt(m[2],10);
+        let yy = m[3].length===2 ? (2000 + parseInt(m[3],10)) : parseInt(m[3],10);
+        let HH = m[4]!=null ? parseInt(m[4],10) : 0;
+        let MI = m[5]!=null ? parseInt(m[5],10) : 0;
+        let SS = m[6]!=null ? parseInt(m[6],10) : 0;
+        return new Date(yy, mm-1, dd, HH, MI, SS);
+      }
+      const t = Date.parse(s);
+      if(!isNaN(t)) return new Date(t);
+    }
+    return null;
+  }
+
+  function findKey(headers,cands){
+    const lower = headers.map(h=>String(h||'').trim().toLowerCase());
+    for(const c of cands){
+      const i = lower.indexOf(c.toLowerCase());
+      if(i!==-1) return headers[i];
+    }
+    return null;
+  }
+
+  function buildDaily(rows,dateKey,salesKey){
+    const m=new Map();
+    const counts=new Map();
+    for(const r of rows){
+      const d=parseDateDMYFirst(r[dateKey]);
+      if(!d) continue;
+      let v=r[salesKey];
+      if(v==null) continue;
+      if(typeof v==='string') v=Number(v.replace(/[^0-9.-]/g,''));
+      if(!isFinite(v)) continue;
+      const key=ymdISO(new Date(d.getFullYear(),d.getMonth(),d.getDate()));
+      m.set(key,(m.get(key)||0)+v);
+      counts.set(key,(counts.get(key)||0)+1);
+    }
+    const arr=[...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
+    const out=arr.map(([k,sum])=>[k,sum, counts.get(k)||0]); // [iso, sum, count]
+    return out;
+  }
+
+  function getMonday(d) {
+    const day = d.getDay();
+    const diff = (day === 0 ? -6 : 1 - day);
+    const monday = new Date(d);
+    monday.setDate(d.getDate() + diff);
+    monday.setHours(0,0,0,0);
+    return monday;
+  }
+
+  function buildWeeklyFromDaily(daily){
+    const sums=new Map(); const counts=new Map();
+    for(const [iso, val, cnt] of daily){
+      const d=new Date(iso+'T00:00:00');
+      const mon=ymdISO(getMonday(d));
+      sums.set(mon,(sums.get(mon)||0)+val);
+      counts.set(mon,(counts.get(mon)||0)+cnt);
+    }
+    const arr=[...sums.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
+    return arr.map(([k,sum])=>[k,sum, counts.get(k)||0]);
+  }
+
+  function buildMonthlyFromDaily(daily){
+    const sums=new Map(); const counts=new Map();
+    for(const [iso, val, cnt] of daily){
+      const d=new Date(iso+'T00:00:00');
+      const key=ymdISO(new Date(d.getFullYear(), d.getMonth(), 1));
+      sums.set(key,(sums.get(key)||0)+val);
+      counts.set(key,(counts.get(key)||0)+cnt);
+    }
+    const arr=[...sums.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
+    return arr.map(([k,sum])=>[k,sum, counts.get(k)||0]);
+  }
+
+  function sumWindow(daily,endISO,days){
+    const end=new Date(endISO+'T00:00:00');
+    const start=new Date(end);
+    start.setDate(end.getDate()-(days-1));
+    let s=0;
+    for(const[iso,v] of daily.map(x=>[x[0],x[1]])){
+      const d=new Date(iso+'T00:00:00');
+      if(d>=start&&d<=end) s+=v;
+    }
+    return s;
+  }
+
+  function populateDates(daily){
+    const sel=document.getElementById('endDate');
+    sel.innerHTML='';
+    daily.forEach(([iso])=>{
+      const d=new Date(iso+'T00:00:00');
+      const o=document.createElement('option');
+      o.value=iso; o.textContent=fmtDMY(d);
+      sel.appendChild(o);
+    });
+    if(daily.length) sel.value=daily[daily.length-1][0];
+    const lastISO = daily.length ? daily[daily.length-1][0] : null;
+    document.getElementById('lastDate').textContent = lastISO ? ('Última fecha: '+fmtDMY(new Date(lastISO+'T00:00:00'))) : '';
+  }
+
+  function prevPeriodMap(entries, unit){
+    // unit: 'month' or 'week' (keys are ISO first-of-month or ISO monday)
+    const map=new Map(entries.map(([k,v])=>[k,v]));
+    const getPrevKey = (iso) => {
+      const d=new Date(iso+'T00:00:00');
+      if(unit==='month'){
+        d.setMonth(d.getMonth()-1);
+        d.setDate(1);
+      } else {
+        d.setDate(d.getDate()-7);
+      }
+      return ymdISO(d);
+    };
+    const prev=new Map();
+    for(const [k] of entries){
+      const pk=getPrevKey(k);
+      if(map.has(pk)) prev.set(k,map.get(pk));
+    }
+    return prev; // currentKey -> prevValue
+  }
+
+  function buildColors(values, prevMap){
+    return values.map((v,i)=>{
+      const key = this.keys[i];
+      const pv = prevMap.get(key);
+      if(pv==null) return 'rgba(148,163,184,0.5)'; // slate-400
+      if(v>pv) return 'rgba(34,197,94,0.6)';       // green-500
+      if(v<pv) return 'rgba(239,68,68,0.6)';       // red-500
+      return 'rgba(148,163,184,0.5)';
+    });
+  }
+
+  let chartMonthly, chartWeekly;
+
+  function renderMonthly(monthly){
+    const labels = monthly.map(e=>fmtMY(new Date(e[0]+'T00:00:00')));
+    const keys   = monthly.map(e=>e[0]);
+    const values = monthly.map(e=>e[1]);
+    const counts = monthly.map(e=>e[2]);
+
+    const avg = values.reduce((a,b)=>a+b,0) / (values.length||1);
+    const target = Number(document.getElementById('targetMonthly').value || 0);
+
+    const prevMap = prevPeriodMap(monthly.map(x=>[x[0],x[1]]),'month');
+    const bgColors = buildColors.call({keys}, values, prevMap);
+
+    const ctx=document.getElementById('chartMonthly');
+    if(chartMonthly) chartMonthly.destroy();
+    chartMonthly=new Chart(ctx,{
+      data:{
+        labels,
+        datasets:[
+          // Actual bars
+          {
+            type:'bar',
+            label:'Ventas mensuales',
+            data: values,
+            backgroundColor: bgColors,
+          },
+          // Previous period bars (ghost)
+          {
+            type:'bar',
+            label:'Mes anterior',
+            data: keys.map(k => prevMap.get(k) ?? null),
+            backgroundColor:'rgba(148,163,184,0.25)',
+          },
+          // Average line
+          {
+            type:'line',
+            label:'Promedio',
+            data: values.map(()=>avg),
+            borderWidth:1.5,
+            pointRadius:0,
+          },
+          // Target line (if provided)
+          {
+            type:'line',
+            label:'Objetivo',
+            data: values.map(()=>target||null),
+            borderWidth:1.5,
+            borderDash:[6,4],
+            pointRadius:0,
+          },
+        ]
+      },
+      options:{
+        responsive:true,
+        plugins:{
+          legend:{ display:true },
+          tooltip:{
+            callbacks:{
+              title:(items)=> items[0]?.label || '',
+              label:(item)=> {
+                const idx=item.dataIndex;
+                const v = values[idx];
+                const c = counts[idx];
+                if(item.dataset.type==='bar' && item.dataset.label==='Mes anterior'){
+                  const pv = prevMap.get(keys[idx]);
+                  return ' Mes anterior: ' + (pv!=null ? fmtCOP(pv) : '—');
+                }
+                if(item.dataset.type==='bar'){
+                  return ' Total: ' + fmtCOP(v) + '  • tickets: ' + c;
+                }
+                if(item.dataset.label==='Promedio'){
+                  return ' Promedio: ' + fmtCOP(avg);
+                }
+                if(item.dataset.label==='Objetivo'){
+                  return target ? (' Objetivo: ' + fmtCOP(target)) : ' Objetivo: —';
+                }
+                return item.formattedValue;
+              }
+            }
+          }
+        },
+        scales:{
+          y:{ beginAtZero:true }
+        }
+      }
+    });
+  }
+
+  function renderWeekly(weekly){
+    const labels = weekly.map(e=>fmtDMY(new Date(e[0]+'T00:00:00'))); // Monday
+    const keys   = weekly.map(e=>e[0]);
+    const values = weekly.map(e=>e[1]);
+    const counts = weekly.map(e=>e[2]);
+
+    const avg = values.reduce((a,b)=>a+b,0) / (values.length||1);
+    const target = Number(document.getElementById('targetWeekly').value || 0);
+
+    const prevMap = prevPeriodMap(weekly.map(x=>[x[0],x[1]]),'week');
+    const bgColors = buildColors.call({keys}, values, prevMap);
+
+    const ctx=document.getElementById('chartWeekly');
+    if(chartWeekly) chartWeekly.destroy();
+    chartWeekly=new Chart(ctx,{
+      data:{
+        labels,
+        datasets:[
+          {
+            type:'bar',
+            label:'Ventas semanales',
+            data: values,
+            backgroundColor: bgColors,
+          },
+          {
+            type:'bar',
+            label:'Semana anterior',
+            data: keys.map(k => prevMap.get(k) ?? null),
+            backgroundColor:'rgba(148,163,184,0.25)',
+          },
+          {
+            type:'line',
+            label:'Promedio',
+            data: values.map(()=>avg),
+            borderWidth:1.5,
+            pointRadius:0,
+          },
+          {
+            type:'line',
+            label:'Objetivo',
+            data: values.map(()=>target||null),
+            borderWidth:1.5,
+            borderDash:[6,4],
+            pointRadius:0,
+          },
+        ]
+      },
+      options:{
+        responsive:true,
+        plugins:{
+          legend:{ display:true },
+          tooltip:{
+            callbacks:{
+              title:(items)=> items[0]?.label || '',
+              label:(item)=> {
+                const idx=item.dataIndex;
+                const v = values[idx];
+                const c = counts[idx];
+                if(item.dataset.type==='bar' && item.dataset.label==='Semana anterior'){
+                  const pv = prevMap.get(keys[idx]);
+                  return ' Semana anterior: ' + (pv!=null ? fmtCOP(pv) : '—');
+                }
+                if(item.dataset.type==='bar'){
+                  return ' Total: ' + fmtCOP(v) + '  • tickets: ' + c;
+                }
+                if(item.dataset.label==='Promedio'){
+                  return ' Promedio: ' + fmtCOP(avg);
+                }
+                if(item.dataset.label==='Objetivo'){
+                  return target ? (' Objetivo: ' + fmtCOP(target)) : ' Objetivo: —';
+                }
+                return item.formattedValue;
+              }
+            }
+          }
+        },
+        scales:{ y:{ beginAtZero:true } }
+      }
+    });
+  }
+
+  // CSV helpers, header replacement and pipeline
+  function parseCSV(url){
+    return new Promise((resolve,reject)=>{
+      Papa.parse(url+'?v='+Date.now(),{
+        download:true, header:false, dynamicTyping:false, skipEmptyLines:true,
+        complete: res => resolve(res.data),
+        error: err => reject(err)
+      });
+    });
+  }
+
+  (async function init(){
+    try{
+      setStatus('Cargando CSV…');
+      const hdrRows  = await parseCSV(HEADERS_FILE);
+      const dataRows = await parseCSV(DATA_FILE);
+
+      if(!hdrRows.length) throw new Error('headers.csv está vacío.');
+      if(!dataRows.length) throw new Error('reporte_utilidad.csv está vacío.');
+
+      // replace report header with canonical (by position)
+      const canonical = hdrRows[0].map(x=>(x??'').toString());
+      const width = Math.max((dataRows[0]||[]).length, canonical.length);
+      dataRows[0] = Array.from({length: width}, (_,i)=> canonical[i] ?? (dataRows[0]||[])[i] ?? ('col'+(i+1)));
+
+      // to objects
+      const rows = (function(rows){
+        const headers = rows[0].map(h=>(h??'').toString());
+        return rows.slice(1).map(r=>{
+          const o={}; headers.forEach((h,i)=>o[h]=r[i]); return o;
+        });
+      })(dataRows);
+
+      const headers = Object.keys(rows[0]||{});
+      const dateKey  = findKey(headers, DATE_KEY_CANDIDATES)  || headers[0];
+      const salesKey = findKey(headers, SALES_KEY_CANDIDATES) || headers.find(h=>String(h).toLowerCase().includes('total')) || headers[1];
+
+      // Build aggregates
+      const daily   = buildDaily(rows,dateKey,salesKey);
+      if(!daily.length){ setStatus('No se encontraron filas con datos válidos.', 'warn'); return; }
+      const monthly = buildMonthlyFromDaily(daily);
+      const weekly  = buildWeeklyFromDaily(daily);
+
+      // KPIs & date selector
+      const endISO = daily[daily.length-1][0];
+      const sel=document.getElementById('endDate');
+      sel.innerHTML='';
+      daily.forEach(([iso])=>{
+        const d=new Date(iso+'T00:00:00');
+        const o=document.createElement('option');
+        o.value=iso; o.textContent=fmtDMY(d);
+        sel.appendChild(o);
+      });
+      sel.value=endISO;
+      document.getElementById('lastDate').textContent = 'Última fecha: ' + fmtDMY(new Date(endISO+'T00:00:00'));
+
+      function refreshKPIs(){ 
+        const end = document.getElementById('endDate').value;
+        document.getElementById('kpi1').textContent = fmtCOP(sumWindow(daily,end,1));
+        document.getElementById('kpi7').textContent = fmtCOP(sumWindow(daily,end,7));
+        document.getElementById('kpi30').textContent= fmtCOP(sumWindow(daily,end,30));
+      }
+      refreshKPIs();
+      sel.addEventListener('change', refreshKPIs);
+
+      // Render charts and react to targets
+      function renderAll(){
+        renderMonthly(monthly);
+        renderWeekly(weekly);
+      }
+      renderAll();
+      document.getElementById('targetMonthly').addEventListener('change', renderAll);
+      document.getElementById('targetWeekly').addEventListener('change', renderAll);
+
+      setStatus('OK', 'ok');
+      log('Fecha:', dateKey, ' • Ventas:', salesKey);
+    }catch(e){
+      setStatus('Error: '+e.message, 'err');
+      log('Error:', e.stack || e.message);
+    }
+  })();
+</script>
+</body>
+</html>
