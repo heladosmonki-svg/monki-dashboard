@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monki — Sales Dashboard (DEBUG v2)</title>
+  <style>
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:#0f172a; color:#e5e7eb; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .card { background:#111827; border:1px solid #1f2937; border-radius:16px; padding:16px; margin-bottom:16px; }
+    .title { font-size: 22px; margin: 0 0 8px; }
+    .muted { color:#94a3b8; }
+    pre { background:#0b1220; border:1px solid #1f2937; border-radius:10px; padding:12px; overflow:auto; color:#cbd5e1; font-size:12px; }
+    code { color:#cbd5e1; }
+    .grid { display:grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .kpi { font-size: 26px; font-weight: 700; }
+    label, select, input, button { font-size:14px; }
+    select, input, button { background:#0b1220; color:#e5e7eb; border:1px solid #1f2937; border-radius:10px; padding:8px 10px; }
+    .ok { color:#34d399; } .warn{color:#fbbf24;} .err{color:#f87171;}
+  </style>
+  <script>
+    // Global error logging
+    window.addEventListener('error', function(ev){
+      const msg = '[JS ERROR] ' + (ev.message || ev.error);
+      const pre = document.getElementById('status'); if(pre){ pre.textContent += '\\n' + msg; }
+    });
+    window.addEventListener('unhandledrejection', function(ev){
+      const msg = '[PROMISE REJECTION] ' + (ev.reason && (ev.reason.stack || ev.reason.message || ev.reason)) ;
+      const pre = document.getElementById('status'); if(pre){ pre.textContent += '\\n' + msg; }
+    });
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Sales Dashboard (DEBUG v2)</h1>
+    <p class="muted">Se registran errores de JS, 404/CORS, y el contenido real de los CSV. Versión: <span id="ver"></span></p>
+
+    <div class="card">
+      <div class="title">Rutas detectadas</div>
+      <pre id="paths"></pre>
+    </div>
+
+    <div class="card">
+      <div class="title">Estado</div>
+      <pre id="status">Iniciando…</pre>
+    </div>
+
+    <div class="card">
+      <div class="title">Encabezados + primeras filas</div>
+      <pre id="sample"></pre>
+    </div>
+
+    <div class="card">
+      <div class="title">KPIs (muestra)</div>
+      <div class="grid">
+        <div>Total Sales (COP)<div id="k_totalSales" class="kpi">$0</div></div>
+        <div>Total Invoices<div id="k_totalInvoices" class="kpi">0</div></div>
+        <div>Average Ticket<div id="k_avgTicket" class="kpi">$0</div></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const VERSION = new Date().toISOString();
+document.getElementById('ver').textContent = VERSION;
+
+const HEADERS_FILE='headers.csv';
+const DATA_FILE='reporte_utilidad.csv';
+
+const COL_TOTAL_GROSS = 'total_purchase_per_product';
+const COL_INVOICE     = 'invoice';
+const COL_TOTAL_PURCH = 'total_purchase';
+const COL_CATEGORY    = 'category';
+const COL_QUANTITY    = 'quantity';
+const COL_GROSS_PROD  = 'gross_prodit';
+
+const DATE_KEY_CANDIDATES = ['date','fecha','fecha_creacion','fecha creación'];
+const PRODUCT_KEY_CANDS   = ['product','producto','item','item_name','nombre_producto'];
+
+const $status = document.getElementById('status');
+const $sample = document.getElementById('sample');
+const $paths  = document.getElementById('paths');
+
+function log(msg){ $status.textContent += '\\n' + msg; }
+function setStatus(msg){ $status.textContent = msg; }
+
+function parseDateDMYStrict(v) {
+  if (v instanceof Date) return v;
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  const m = s.match(/^\\s*(\\d{1,2})[\\/\\-.](\\d{1,2})[\\/\\-.](\\d{2,4})(?:\\s.*)?$/);
+  if (!m) return null;
+  let dd = parseInt(m[1], 10);
+  let mm = parseInt(m[2], 10);
+  let yy = m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10);
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  const d = new Date(yy, mm - 1, dd);
+  if (d.getFullYear() !== yy || d.getMonth() !== mm - 1 || d.getDate() !== dd) return null;
+  return d;
+}
+function num(x){ if(x==null)return 0; if(typeof x==='number')return isFinite(x)?x:0; if(typeof x==='string'){const n=Number(x.replace(/[^0-9.-]/g,'')); return isFinite(n)?n:0;} return 0; }
+function findKey(headers, cands){ const lower=headers.map(h=>String(h||'').trim().toLowerCase()); for(const c of cands){ const i=lower.indexOf(c.toLowerCase()); if(i!==-1) return headers[i]; } return null; }
+
+async function head(url){
+  try{
+    const res = await fetch(url+'?v='+Date.now(), { method:'GET' });
+    return { ok: res.ok, status: res.status, statusText: res.statusText };
+  }catch(e){
+    return { ok:false, status:0, statusText: String(e) };
+  }
+}
+
+function parseCSV(url){
+  return new Promise((resolve,reject)=>{
+    Papa.parse(url+'?v='+Date.now(),{
+      download:true, header:false, dynamicTyping:false, skipEmptyLines:true,
+      complete:res=>resolve(res.data),
+      error:err=>reject(err)
+    });
+  });
+}
+
+(async function init(){
+  try{
+    const base = window.location.href.replace(/[^/]*$/, '');
+    $paths.textContent = [
+      'Base URL: ' + base,
+      'HEADERS_FILE: ' + base + HEADERS_FILE,
+      'DATA_FILE:    ' + base + DATA_FILE
+    ].join('\\n');
+
+    setStatus('Probando acceso a archivos…');
+    const h = await head(HEADERS_FILE);
+    const d = await head(DATA_FILE);
+    log(`headers.csv GET → ${h.status} (${h.ok?'OK':'FAIL'})`);
+    log(`reporte_utilidad.csv GET → ${d.status} (${d.ok?'OK':'FAIL'})`);
+    if(!h.ok || !d.ok){
+      log('❗ Revisa que los CSV estén en el mismo folder y que el repo sea público.', 'err');
+      return;
+    }
+
+    setStatus('Cargando CSV con PapaParse…');
+    const hdrRows  = await parseCSV(HEADERS_FILE);
+    const dataRows = await parseCSV(DATA_FILE);
+    log(`headers.csv filas: ${hdrRows.length}`);
+    log(`reporte_utilidad.csv filas: ${dataRows.length}`);
+    if(!hdrRows.length || !dataRows.length){ log('❗ Alguno de los CSV está vacío.'); return; }
+
+    const canonical = hdrRows[0].map(x=>(x??'').toString());
+    const width = Math.max((dataRows[0]||[]).length, canonical.length);
+    dataRows[0] = Array.from({length: width}, (_,i)=> canonical[i] ?? (dataRows[0]||[])[i] ?? ('col'+(i+1)));
+
+    const headers = dataRows[0];
+    const rows = dataRows.slice(1).map(r=>{const o={}; headers.forEach((h,i)=>o[h]=r[i]); return o; });
+
+    $sample.textContent = 'Headers usados: ' + JSON.stringify(headers) + '\\n\\nPrimeras 3 filas:\\n' + JSON.stringify(rows.slice(0,3), null, 2);
+
+    const dateKey    = findKey(headers, DATE_KEY_CANDIDATES) || headers[0];
+    const productKey = findKey(headers, PRODUCT_KEY_CANDS)   || 'product';
+    log(`dateKey: ${dateKey} | productKey: ${productKey}`);
+
+    // Simple KPI test
+    let totalSales=0, invoices=new Set();
+    for(const r of rows){
+      totalSales += num(r[COL_TOTAL_GROSS]);
+      const inv = (r[COL_INVOICE]??'').toString();
+      if(inv) invoices.add(inv);
+    }
+    document.getElementById('k_totalSales').textContent    = new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0}).format(totalSales);
+    document.getElementById('k_totalInvoices').textContent = invoices.size.toLocaleString('es-CO');
+    document.getElementById('k_avgTicket').textContent     = '—';
+
+    log('OK: Se cargó y se leyeron las primeras filas.');
+  }catch(e){
+    log('ERROR: '+(e && e.message ? e.message : e));
+  }
+})();
+</script>
+</body>
+</html>
