@@ -71,14 +71,14 @@
     <div class="card chart-card">
       <div class="kpi-title">Ventas mensuales</div>
       <canvas id="chartMonthly"></canvas>
-      <div class="legend">Agregado por mes calendario (YYYY-MM).</div>
+      <div class="legend">Agregado por mes calendario (<code>MM/YYYY</code>).</div>
     </div>
 
     <!-- Weekly chart SECOND (Mon–Sun) -->
     <div class="card chart-card">
       <div class="kpi-title">Ventas semanales (lunes a domingo)</div>
       <canvas id="chartWeekly"></canvas>
-      <div class="legend">La semana inicia el lunes y termina el domingo.</div>
+      <div class="legend">Las etiquetas muestran el <strong>lunes</strong> de cada semana en formato <code>DD/MM/YYYY</code>.</div>
     </div>
 
     <div class="card" style="margin-top:16px;">
@@ -106,19 +106,48 @@
 
   const fmtCOP = v => new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0}).format(v||0);
 
-  function ymd(d){
-    const yyyy=d.getFullYear(), mm=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
+  // --- Formatting helpers (display) ---
+  function fmtDMY(d){
+    const dd=String(d.getDate()).padStart(2,'0');
+    const mm=String(d.getMonth()+1).padStart(2,'0');
+    const yyyy=d.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  }
+  function fmtMY(d){ // month/year for monthly labels
+    const mm=String(d.getMonth()+1).padStart(2,'0');
+    const yyyy=d.getFullYear();
+    return `${mm}/${yyyy}`;
+  }
+  function ymdISO(d){
+    const yyyy=d.getFullYear();
+    const mm=String(d.getMonth()+1).padStart(2,'0');
+    const dd=String(d.getDate()).padStart(2,'0');
     return `${yyyy}-${mm}-${dd}`;
   }
 
-  function parseDate(v){
+  // --- Parse dates assuming D/M/Y first ---
+  function parseDateDMYFirst(v){
     if(v instanceof Date) return v;
-    if(typeof v==='number') return new Date(v);
+    if(typeof v==='number') return new Date(v); // epoch ms fallback
+
     if(typeof v==='string'){
-      let t=Date.parse(v);
+      const s = v.trim();
+
+      // Try D/M/Y or D-M-Y (with optional time)
+      const m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+      if(m){
+        let dd = parseInt(m[1],10);
+        let mm = parseInt(m[2],10);
+        let yy = m[3].length===2 ? (2000 + parseInt(m[3],10)) : parseInt(m[3],10);
+        let HH = m[4]!=null ? parseInt(m[4],10) : 0;
+        let MI = m[5]!=null ? parseInt(m[5],10) : 0;
+        let SS = m[6]!=null ? parseInt(m[6],10) : 0;
+        return new Date(yy, mm-1, dd, HH, MI, SS);
+      }
+
+      // ISO-ish fallback (YYYY-MM-DD ...)
+      const t = Date.parse(s);
       if(!isNaN(t)) return new Date(t);
-      const m=v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-      if(m){ const d=+m[1], mo=+m[2], y=+m[3]; return new Date(y,mo-1,d); }
     }
     return null;
   }
@@ -152,22 +181,22 @@
   }
 
   function buildDaily(rows,dateKey,salesKey){
-    const m=new Map();
+    const m=new Map(); // key: ISO yyyy-mm-dd, val: sum
     for(const r of rows){
-      const d=parseDate(r[dateKey]);
+      const d=parseDateDMYFirst(r[dateKey]);
       if(!d) continue;
       let v=r[salesKey];
       if(v==null) continue;
       if(typeof v==='string') v=Number(v.replace(/[^0-9.-]/g,''));
       if(!isFinite(v)) continue;
-      const ds=ymd(new Date(d.getFullYear(),d.getMonth(),d.getDate()));
-      m.set(ds,(m.get(ds)||0)+v);
+      const key=ymdISO(new Date(d.getFullYear(),d.getMonth(),d.getDate()));
+      m.set(key,(m.get(key)||0)+v);
     }
     return [...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
   }
 
   function getMonday(d) {
-    const day = d.getDay();
+    const day = d.getDay(); // 0=Sun,1=Mon,...
     const diff = (day === 0 ? -6 : 1 - day);
     const monday = new Date(d);
     monday.setDate(d.getDate() + diff);
@@ -176,54 +205,59 @@
   }
 
   function buildWeeklyFromDaily(dailyEntries){
-    const m=new Map();
-    for(const [ds, val] of dailyEntries){
-      const d=new Date(ds+'T00:00:00');
+    const m=new Map(); // key: Monday (ISO), val: sum
+    for(const [iso, val] of dailyEntries){
+      const d=new Date(iso+'T00:00:00');
       const mon=getMonday(d);
-      const key=ymd(mon);
+      const key=ymdISO(mon);
       m.set(key,(m.get(key)||0)+val);
     }
     return [...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
   }
 
   function buildMonthlyFromDaily(dailyEntries){
-    const m=new Map();
-    for(const [ds, val] of dailyEntries){
-      const d=new Date(ds+'T00:00:00');
-      const key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    const m=new Map(); // key: first day of month (ISO), val: sum
+    for(const [iso, val] of dailyEntries){
+      const d=new Date(iso+'T00:00:00');
+      const key=ymdISO(new Date(d.getFullYear(), d.getMonth(), 1));
       m.set(key,(m.get(key)||0)+val);
     }
     return [...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
   }
 
-  function sumWindow(entries,endStr,days){
-    const end=new Date(endStr+'T00:00:00');
+  function sumWindow(dailyEntries,endISO,days){
+    const end=new Date(endISO+'T00:00:00');
     const start=new Date(end);
     start.setDate(end.getDate()-(days-1));
     let s=0;
-    for(const[ds,v] of entries){
-      const d=new Date(ds+'T00:00:00');
+    for(const[iso,v] of dailyEntries){
+      const d=new Date(iso+'T00:00:00');
       if(d>=start&&d<=end) s+=v;
     }
     return s;
   }
 
-  function populateDates(entries){
+  function populateDates(dailyEntries){
     const sel=document.getElementById('endDate');
     sel.innerHTML='';
-    entries.forEach(([ds])=>{
+    dailyEntries.forEach(([iso])=>{
+      const d=new Date(iso+'T00:00:00');
       const o=document.createElement('option');
-      o.value=ds; o.textContent=ds;
+      o.value=iso;          // keep ISO for robust math
+      o.textContent=fmtDMY(d); // show DD/MM/YYYY
       sel.appendChild(o);
     });
-    if(entries.length) sel.value=entries[entries.length-1][0];
-    document.getElementById('lastDate').textContent=entries.length?'Última fecha: '+entries[entries.length-1][0]:'';
+    if(dailyEntries.length) sel.value=dailyEntries[dailyEntries.length-1][0];
+    const lastISO = dailyEntries.length ? dailyEntries[dailyEntries.length-1][0] : null;
+    document.getElementById('lastDate').textContent = lastISO ? ('Última fecha: '+fmtDMY(new Date(lastISO+'T00:00:00'))) : '';
   }
 
   let chartMonthly, chartWeekly;
   function renderMonthly(entries){
     const ctx=document.getElementById('chartMonthly');
-    const labels=entries.map(e=>e[0]);
+    const labels=entries.map(e=>{
+      const d=new Date(e[0]+'T00:00:00'); return fmtMY(d);
+    });
     const data  =entries.map(e=>e[1]);
     if(chartMonthly) chartMonthly.destroy();
     chartMonthly=new Chart(ctx,{
@@ -236,7 +270,7 @@
   }
   function renderWeekly(entries){
     const ctx=document.getElementById('chartWeekly');
-    const labels=entries.map(e=>e[0]);
+    const labels=entries.map(e=>fmtDMY(new Date(e[0]+'T00:00:00'))); // show Monday as DD/MM/YYYY
     const data  =entries.map(e=>e[1]);
     if(chartWeekly) chartWeekly.destroy();
     chartWeekly=new Chart(ctx,{
@@ -249,10 +283,10 @@
   }
 
   function refreshKpis(dailyEntries){
-    const endStr=document.getElementById('endDate').value;
-    document.getElementById('kpi1').textContent = fmtCOP(sumWindow(dailyEntries,endStr,1));
-    document.getElementById('kpi7').textContent = fmtCOP(sumWindow(dailyEntries,endStr,7));
-    document.getElementById('kpi30').textContent= fmtCOP(sumWindow(dailyEntries,endStr,30));
+    const endISO=document.getElementById('endDate').value;
+    document.getElementById('kpi1').textContent = fmtCOP(sumWindow(dailyEntries,endISO,1));
+    document.getElementById('kpi7').textContent = fmtCOP(sumWindow(dailyEntries,endISO,7));
+    document.getElementById('kpi30').textContent= fmtCOP(sumWindow(dailyEntries,endISO,30));
   }
 
   function parseCSV(url){
@@ -274,13 +308,13 @@
       if(!hdrRows.length) throw new Error('headers.csv está vacío.');
       if(!dataRows.length) throw new Error('reporte_utilidad.csv está vacío.');
 
+      // Replace report header by canonical (by position)
       const canonical = hdrRows[0].map(x=>(x??'').toString());
       if(!canonical.length) throw new Error('La primera fila de headers.csv está vacía.');
-      // replace data header row by position
       const width = Math.max((dataRows[0]||[]).length, canonical.length);
-      const newH = Array.from({length: width}, (_,i)=> canonical[i] ?? (dataRows[0]||[])[i] ?? ('col'+(i+1)));
-      dataRows[0] = newH;
+      dataRows[0] = Array.from({length: width}, (_,i)=> canonical[i] ?? (dataRows[0]||[])[i] ?? ('col'+(i+1)));
 
+      // Convert to objects
       const rows = (function(rows){
         const headers = rows[0].map(h=>(h??'').toString());
         return rows.slice(1).map(r=>{
@@ -307,7 +341,7 @@
 
       setStatus('OK', 'ok');
       log('Headers usados:', headers.join(' | '));
-      log('Fecha:', dateKey, ' • Ventas:', salesKey);
+      log('Fecha (lectura D/M/Y):', dateKey, ' • Ventas:', salesKey);
     }catch(e){
       setStatus('Error: '+e.message, 'err');
       log('Error:', e.stack || e.message);
