@@ -15,9 +15,7 @@
       display: flex;
       min-height: 100vh;
     }
-    .sidebar {
-      width: 200px; background:#111827; border-right:1px solid #1f2937; padding:20px;
-    }
+    .sidebar { width:200px; background:#111827; border-right:1px solid #1f2937; padding:20px; }
     .sidebar h2 { margin:0 0 12px; font-size:20px; }
     .menu-item { margin:10px 0; }
     .menu-item a { color:var(--text); text-decoration:none; font-size:16px; }
@@ -52,114 +50,65 @@
 
   <div class="container">
     <h1>Sales Dashboard</h1>
-    <div class="subtitle">Fechas del CSV interpretadas <b>solo</b> como DD/MM/YYYY (o DD-MM-YYYY / DD.MM.YYYY). Rango por defecto: últimos 30 días desde la última fecha válida.</div>
+    <div class="subtitle">Fechas CSV en <b>DD/MM/YYYY</b> estricto. Rango por defecto: últimos 30 días desde la última fecha válida.</div>
 
     <div class="filters">
-      <div>
-        <label>Fecha inicio</label><br/>
-        <input id="startDate" type="date" />
-      </div>
-      <div>
-        <label>Fecha fin</label><br/>
-        <input id="endDate" type="date" />
-      </div>
-      <div>
-        <label>Producto</label><br/>
-        <select id="productFilter"></select>
-      </div>
-      <div>
-        <button id="applyBtn">Aplicar filtros</button>
-      </div>
+      <div><label>Fecha inicio</label><br/><input id="startDate" type="date" /></div>
+      <div><label>Fecha fin</label><br/><input id="endDate" type="date" /></div>
+      <div><label>Producto</label><br/><select id="productFilter"></select></div>
+      <div><button id="applyBtn">Aplicar filtros</button></div>
     </div>
 
     <div class="kpis">
-      <div class="card">
-        <div class="kpi-title">Total Sales (COP)</div>
-        <div id="k_totalSales" class="kpi-value">$0</div>
-      </div>
-      <div class="card">
-        <div class="kpi-title">Total Invoices</div>
-        <div id="k_totalInvoices" class="kpi-value">0</div>
-      </div>
-      <div class="card">
-        <div class="kpi-title">Average Ticket (COP / invoice)</div>
-        <div id="k_avgTicket" class="kpi-value">$0</div>
-      </div>
-      <div class="card">
-        <div class="kpi-title">Total Icecreams (units)</div>
-        <div id="k_totalIcecreams" class="kpi-value">0</div>
-      </div>
-      <div class="card">
-        <div class="kpi-title">Avg Toppings per Icecream</div>
-        <div id="k_avgToppings" class="kpi-value">0</div>
-      </div>
-      <div class="card">
-        <div class="kpi-title">Average Net Profit (%)</div>
-        <div id="k_avgNetProfit" class="kpi-value">0%</div>
-      </div>
+      <div class="card"><div class="kpi-title">Total Sales (COP)</div><div id="k_totalSales" class="kpi-value">$0</div></div>
+      <div class="card"><div class="kpi-title">Total Invoices</div><div id="k_totalInvoices" class="kpi-value">0</div></div>
+      <div class="card"><div class="kpi-title">Average Ticket (COP / invoice)</div><div id="k_avgTicket" class="kpi-value">$0</div></div>
+      <div class="card"><div class="kpi-title">Total Icecreams (units)</div><div id="k_totalIcecreams" class="kpi-value">0</div></div>
+      <div class="card"><div class="kpi-title">Avg Toppings per Icecream</div><div id="k_avgToppings" class="kpi-value">0</div></div>
+      <div class="card"><div class="kpi-title">Average Net Profit (%)</div><div id="k_avgNetProfit" class="kpi-value">0%</div></div>
     </div>
 
     <div id="status" class="status"></div>
-    <div class="note">Fuentes: <code>headers.csv</code> + <code>reporte_utilidad.csv</code>. Los encabezados del reporte se reemplazan por la primera fila de <code>headers.csv</code> (por posición). Las fechas del CSV se interpretan <b>solo</b> como DD/MM/YYYY (o DD-MM-YYYY / DD.MM.YYYY). Los campos de fecha del formulario usan formato ISO (YYYY-MM-DD) sin afectar el cálculo.</div>
+    <div class="note">Usa: <code>headers.csv</code> + <code>reporte_utilidad.csv</code> en el mismo folder. Las fechas se interpretan solo como DD/MM/YYYY (o DD-MM-YYYY / DD.MM.YYYY). Total Sales usa <code>total_purchase_per_product</code>.</div>
   </div>
 
 <script>
-const HEADERS_FILE = 'headers.csv';
-const DATA_FILE    = 'reporte_utilidad.csv';
+const HEADERS_FILE='headers.csv';
+const DATA_FILE='reporte_utilidad.csv';
 
-// === Columnas fijas (según tu especificación) ===
-const COL_TOTAL_GROSS = 'total_purchase_per_product'; // (ajustado a tu preferencia más reciente)
+const COL_TOTAL_GROSS = 'total_purchase_per_product';
 const COL_INVOICE     = 'invoice';
 const COL_TOTAL_PURCH = 'total_purchase';
 const COL_CATEGORY    = 'category';
 const COL_QUANTITY    = 'quantity';
 const COL_GROSS_PROD  = 'gross_prodit';
 
-// Auto-detección de columnas de fecha y producto (nombres en headers.csv)
 const DATE_KEY_CANDIDATES = ['date','fecha','fecha_creacion','fecha creación'];
 const PRODUCT_KEY_CANDS   = ['product','producto','item','item_name','nombre_producto'];
 
 const statusEl = document.getElementById('status');
-function logStatus(msg){ statusEl.textContent += msg + '\\n'; }
+function logStatus(msg){ statusEl.textContent += '\n' + msg; }
 
-// === PARSER ESTRICTO DD/MM/YYYY (permite texto/horas después) ===
 function parseDateDMYStrict(v) {
   if (v instanceof Date) return v;
   if (typeof v !== 'string') return null;
   const s = v.trim();
-  // Captura solo la parte fecha al inicio y permite basura/horario luego
-  const m = s.match(/^\\s*(\\d{1,2})[\\/\\-.](\\d{1,2})[\\/\\-.](\\d{2,4})(?:\\s.*)?$/);
+  const m = s.match(/^\s*(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})(?:\s.*)?$/);
   if (!m) return null;
   let dd = parseInt(m[1], 10);
   let mm = parseInt(m[2], 10);
   let yy = m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10);
   if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
   const d = new Date(yy, mm - 1, dd);
-  // Validación sin rollover
   if (d.getFullYear() !== yy || d.getMonth() !== mm - 1 || d.getDate() !== dd) return null;
   return d;
 }
 
-// === Utilidades ===
 function fmtCOP(v){ return new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0}).format(v||0); }
 function fmtPct(v){ return (v||0).toFixed(1).replace('.',',') + '%'; }
-function findKey(headers, candidates){
-  const lower=headers.map(h=>String(h||'').trim().toLowerCase());
-  for(const c of candidates){
-    const i=lower.indexOf(c.toLowerCase());
-    if(i!==-1) return headers[i];
-  }
-  return null;
-}
-function num(x){
-  if(x==null) return 0;
-  if(typeof x==='number') return isFinite(x)?x:0;
-  if(typeof x==='string'){
-    const n=Number(x.replace(/[^0-9.-]/g,''));
-    return isFinite(n)?n:0;
-  }
-  return 0;
-}
+function findKey(headers, cands){ const lower=headers.map(h=>String(h||'').trim().toLowerCase()); for(const c of cands){ const i=lower.indexOf(c.toLowerCase()); if(i!==-1) return headers[i]; } return null; }
+function num(x){ if(x==null)return 0; if(typeof x==='number')return isFinite(x)?x:0; if(typeof x==='string'){const n=Number(x.replace(/[^0-9.-]/g,'')); return isFinite(n)?n:0;} return 0; }
+
 function parseCSV(url){
   return new Promise((resolve,reject)=>{
     Papa.parse(url+'?v='+Date.now(),{
@@ -168,23 +117,17 @@ function parseCSV(url){
     });
   });
 }
-// Formato ISO local (evita toISOString/UTC shift)
-function isoLocal(d){
-  const y = d.getFullYear();
-  const m = String(d.getMonth()+1).padStart(2,'0');
-  const day = String(d.getDate()).padStart(2,'0');
-  return y+'-'+m+'-'+day;
-}
+
+// ISO local sin UTC shift
+function isoLocal(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0'); return y+'-'+m+'-'+day; }
 
 (async function init(){
   try{
-    logStatus('Cargando CSV…');
     const hdrRows  = await parseCSV(HEADERS_FILE);
     const dataRows = await parseCSV(DATA_FILE);
     if(!hdrRows.length) throw new Error('headers.csv vacío');
     if(!dataRows.length) throw new Error('reporte_utilidad.csv vacío');
 
-    // Reemplazar encabezados por posición usando headers.csv (primera fila)
     const canonical = hdrRows[0].map(x=>(x??'').toString());
     const width = Math.max((dataRows[0]||[]).length, canonical.length);
     dataRows[0] = Array.from({length: width}, (_,i)=> canonical[i] ?? (dataRows[0]||[])[i] ?? ('col'+(i+1)));
@@ -195,24 +138,16 @@ function isoLocal(d){
     const dateKey    = findKey(headers, DATE_KEY_CANDIDATES) || headers[0];
     const productKey = findKey(headers, PRODUCT_KEY_CANDS)   || 'product';
 
-    // Parseo estricto; permite "DD/MM/YYYY HH:mm..." tomando solo la parte fecha
     const parsedDates = rows.map(r => parseDateDMYStrict(r[dateKey]));
     const invalidCount = parsedDates.filter(d => !d).length;
     const dates = parsedDates.filter(Boolean).sort((a,b)=>a-b);
-    if(invalidCount > 0){
-      logStatus(`Advertencia: ${invalidCount} filas con fecha inválida (no DD/MM/YYYY) fueron ignoradas.`);
-    }
-    if(!dates.length){ throw new Error('No hay fechas válidas en DD/MM/YYYY.'); }
+    if(!dates.length) throw new Error('No hay fechas válidas DD/MM/YYYY.');
 
-    // Ventana por defecto: últimos 30 días acabando en la última fecha válida
     const maxDate = dates[dates.length-1];
     const minDefault = new Date(maxDate); minDefault.setDate(maxDate.getDate()-29);
-
-    // Establecer inputs con ISO local (sin UTC)
     document.getElementById('startDate').value = isoLocal(minDefault);
     document.getElementById('endDate').value   = isoLocal(maxDate);
 
-    // Lista de productos
     const $prod = document.getElementById('productFilter');
     const uniq = Array.from(new Set(rows.map(r=> (r[productKey]??'').toString().trim()))).filter(s=>s.length>0).sort((a,b)=>a.localeCompare(b));
     const optAll = document.createElement('option'); optAll.value='__ALL__'; optAll.textContent='Todos los productos'; $prod.appendChild(optAll);
@@ -225,7 +160,7 @@ function isoLocal(d){
       const prod  = document.getElementById('productFilter').value;
 
       const filtered = rows.filter((r, idx)=>{
-        const d = parsedDates[idx]; // ya estrictamente parseada
+        const d = parsedDates[idx];
         if(!d) return false;
         if(d < start || d > end) return false;
         if(prod !== '__ALL__'){
@@ -239,16 +174,12 @@ function isoLocal(d){
     }
 
     function computeKPIs(data){
-      let totalSalesCOP = 0;
-      let totalIcecreams = 0;
-      let totalToppings  = 0;
-      let sumGrossProdit = 0;
-
+      let totalSalesCOP=0, totalIcecreams=0, totalToppings=0, sumGrossProdit=0;
       const invoices = new Set();
       const invoicePurchase = new Map();
 
       for(const r of data){
-        totalSalesCOP += num(r[COL_TOTAL_GROSS]); // ahora usa total_purchase_per_product
+        totalSalesCOP += num(r[COL_TOTAL_GROSS]);
         sumGrossProdit += num(r[COL_GROSS_PROD]);
 
         const inv = (r[COL_INVOICE]??'').toString();
@@ -259,23 +190,18 @@ function isoLocal(d){
 
         const cat = (r[COL_CATEGORY]??'').toString().trim().toLowerCase();
         const qty = num(r[COL_QUANTITY]);
-
-        if(cat === 'helados'){ totalIcecreams += qty; }
-        else if(cat === 'toppings'){ totalToppings += qty; }
+        if(cat === 'helados') totalIcecreams += qty;
+        else if(cat === 'toppings') totalToppings += qty;
       }
 
       const totalInvoices = invoices.size;
-
       let avgTicket = 0;
-      if(totalInvoices > 0){
-        let s = 0;
-        for(const inv of invoices){ s += (invoicePurchase.get(inv) || 0); }
-        avgTicket = s / totalInvoices;
+      if(totalInvoices>0){
+        let s=0; for(const inv of invoices){ s += (invoicePurchase.get(inv)||0); }
+        avgTicket = s/totalInvoices;
       }
-
-      const avgToppings = totalIcecreams > 0 ? (totalToppings / totalIcecreams) : 0;
-      let avgNetProfitPct = 0;
-      if(totalSalesCOP > 0){ avgNetProfitPct = (sumGrossProdit / totalSalesCOP) * 100; }
+      const avgToppings = totalIcecreams>0 ? (totalToppings/totalIcecreams) : 0;
+      const avgNetProfitPct = totalSalesCOP>0 ? (sumGrossProdit/totalSalesCOP)*100 : 0;
 
       document.getElementById('k_totalSales').textContent     = fmtCOP(totalSalesCOP);
       document.getElementById('k_totalInvoices').textContent  = totalInvoices.toLocaleString('es-CO');
@@ -287,7 +213,7 @@ function isoLocal(d){
 
     document.getElementById('applyBtn').addEventListener('click', applyFilters);
     applyFilters();
-    logStatus('Listo. Fechas CSV en DD/MM/YYYY (estricto) y inputs en ISO local (sin UTC).');
+    logStatus('OK: datos cargados y KPIs calculados.');
   }catch(e){
     logStatus('Error: '+(e && e.message ? e.message : e));
   }
