@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Monki — Dashboard de Ventas (con headers.xlsx)</title>
+  <title>Monki — Dashboard de Ventas</title>
   <style>
     :root { --bg:#0f172a; --card:#111827; --muted:#94a3b8; --text:#e5e7eb; }
     * { box-sizing: border-box; }
@@ -31,13 +31,25 @@
     pre.log { background:#0b1220; border:1px solid #1f2937; padding:10px; border-radius:10px; color:#cbd5e1; overflow:auto }
     @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
   </style>
+
+  <!-- 1) SheetJS (XLSX) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.20.0/dist/xlsx.full.min.js"></script>
+  <script>
+    // Fallback to unpkg if jsDelivr is blocked
+    if (!window.XLSX) {
+      document.write('<script src="https://unpkg.com/xlsx@0.20.0/dist/xlsx.full.min.js"><\/script>');
+    }
+  </script>
+
+  <!-- 2) Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <div class="container">
     <h1>Dashboard de Ventas — Monki</h1>
     <div class="subtitle">
-      Este panel lee <code>reporte_utilidad.xlsx</code> y reemplaza sus encabezados
-      con los de <code>headers.xlsx</code> (por <strong>posición</strong>), luego calcula 1, 7 y 30 días.
+      Este panel lee <code>headers.xlsx</code> (primera fila = encabezados canónicos) y
+      <code>reporte_utilidad.xlsx</code> (datos). Reemplaza los encabezados del reporte por posición y calcula totales de <strong>1</strong>, <strong>7</strong> y <strong>30</strong> días.
     </div>
 
     <div class="controls">
@@ -67,7 +79,11 @@
     <div class="card chart-card">
       <div class="kpi-title">Ventas diarias</div>
       <canvas id="chart"></canvas>
-      <div class="legend">Necesario: <code>headers.xlsx</code> (primera fila = nombres canónicos).</div>
+      <div class="legend">
+        La detección de columnas usa candidatos.<br>
+        <strong>Fecha</strong> candidatos: <code>date</code>, <code>fecha</code>, <code>fecha_creacion</code>, <code>fecha creación</code><br>
+        <strong>Ventas (bruto por línea)</strong> candidatos: <code>total</code>, <code>total_purchase_per_product</code>, <code>total_gross</code>, <code>Total.1</code>, <code>total_purchase</code>
+      </div>
     </div>
 
     <div class="card" style="margin-top:16px;">
@@ -81,14 +97,11 @@
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.20.0/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- 3) Your dashboard code (runs after libraries) -->
   <script>
     const EXCEL_FILE   = 'reporte_utilidad.xlsx';
     const HEADERS_FILE = 'headers.xlsx';
 
-    // After replacement, we try these candidates to find date and gross sales keys.
-    // You can adjust these if your canonical headers use other names.
     const DATE_KEY_CANDIDATES  = ['date', 'fecha', 'fecha_creacion', 'fecha creación'];
     const SALES_KEY_CANDIDATES = ['total', 'total_purchase_per_product', 'total_gross', 'total.1', 'total_purchase'];
 
@@ -122,7 +135,6 @@
     }
 
     function aoaToObjects(rows) {
-      // rows: array-of-arrays, rows[0] = header row
       if (!rows || !rows.length) return [];
       const headers = (rows[0] || []).map(h => (h ?? '').toString());
       const out = [];
@@ -153,6 +165,7 @@
     }
 
     async function loadAoaFromXlsx(url) {
+      if (!window.XLSX) throw new Error('XLSX no está disponible. Verifica que la librería cargó.');
       const buf = await fetchArrayBuffer(url);
       const wb = XLSX.read(buf, { type: 'array', cellDates: true });
       const ws = wb.Sheets[wb.SheetNames[0]];
@@ -161,7 +174,6 @@
     }
 
     function replaceHeadersByPosition(dataRows, canonicalHeaders) {
-      // Ensure dataRows[0] exists and replace it with canonicalHeaders (by position)
       if (!dataRows.length) return dataRows;
       const width = Math.max((dataRows[0] || []).length, canonicalHeaders.length);
       const newHeader = [];
@@ -231,25 +243,37 @@
     (async function init() {
       try {
         setStatus('Cargando headers y datos…');
-        // 1) Load canonical headers (AoA) and extract first row
+        // 1) Load canonical headers
         const hdrAoa = await loadAoaFromXlsx(HEADERS_FILE);
         if (!hdrAoa.length) throw new Error('headers.xlsx está vacío.');
         const canonicalHeaders = (hdrAoa[0] || []).map(x => (x ?? '').toString());
         log('Headers canónicos:', canonicalHeaders.join(' | '));
 
-        // 2) Load data as AoA, replace header row by position
+        // 2) Load data and replace header row by position
         const dataAoa = await loadAoaFromXlsx(EXCEL_FILE);
         if (!dataAoa.length) throw new Error('reporte_utilidad.xlsx está vacío.');
         const origHeaders = (dataAoa[0] || []).map(x => (x ?? '').toString());
         log('Headers originales:', origHeaders.join(' | '));
 
         replaceHeadersByPosition(dataAoa, canonicalHeaders);
-        const rows = aoaToObjects(dataAoa);
+        const rows = (function(rows) {
+          if (!rows || !rows.length) return [];
+          const headers = rows[0].map(h => (h ?? '').toString());
+          const out = [];
+          for (let i = 1; i < rows.length; i++) {
+            const r = rows[i] || [];
+            const obj = {};
+            for (let j = 0; j < headers.length; j++) obj[headers[j]] = r[j];
+            out.push(obj);
+          }
+          return out;
+        })(dataAoa);
+
         const effectiveHeaders = Object.keys(rows[0] || {});
         log('Headers efectivos:', effectiveHeaders.join(' | '));
 
         // 3) Detect keys
-        const dateKey  = findKey(effectiveHeaders, DATE_KEY_CANDIDATES) || effectiveHeaders[0];
+        const dateKey  = findKey(effectiveHeaders, DATE_KEY_CANDIDATES)  || effectiveHeaders[0];
         const salesKey = findKey(effectiveHeaders, SALES_KEY_CANDIDATES) || effectiveHeaders.find(h => h.toLowerCase().includes('total')) || effectiveHeaders[1];
         log('Usando columnas → fecha:', dateKey, ', ventas:', salesKey);
 
