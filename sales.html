@@ -271,7 +271,7 @@ function parseCSV(url){
       const invoicePurchase = new Map(); // invoice -> total_purchase (last seen)
 
       for(const r of data){
-        totalSalesCOP += num(r[COL_TOTAL_GROSS]);
+        totalSalesCOP += num(r[COL_TOTAL_PURCH]);
         sumGrossProdit += num(r[COL_GROSS_PROD]);
 
         const inv = (r[COL_INVOICE]??'').toString();
