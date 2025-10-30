@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monki — Trends</title>
+  <style>
+    :root { --bg:#0f172a; --card:#111827; --muted:#94a3b8; --text:#e5e7eb; --border:#1f2937; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      background: linear-gradient(180deg, #0b1220, #0f172a); color: var(--text); display: flex; min-height: 100vh;
+    }
+    .sidebar { width: 200px; background:#111827; border-right:1px solid var(--border); padding:20px; }
+    .sidebar h2 { margin:0 0 12px; font-size:20px; }
+    .menu-item { margin:10px 0; }
+    .menu-item a { color:var(--text); text-decoration:none; font-size:16px; }
+    .menu-item a:hover, .menu-item a.active { text-decoration:underline; font-weight:600; }
+    .container { flex:1; padding:24px; max-width:1200px; margin:0 auto; width:100%; }
+    h1 { font-size:28px; margin:0 0 8px; }
+    .subtitle { color:var(--muted); margin-bottom:20px; }
+    .filters {
+      display:flex; flex-wrap:wrap; gap:12px; align-items:center;
+      background:var(--card); border:1px solid var(--border); padding:12px; border-radius:12px; margin-bottom:16px;
+    }
+    .filters label { color:var(--muted); font-size:14px; }
+    .filters input, .filters select, .filters button {
+      background:#0b1220; color:var(--text); border:1px solid var(--border); padding:8px 10px; border-radius:10px;
+    }
+    .note { color: var(--muted); font-size: 12px; margin-top: 12px; }
+    .status { color: var(--muted); font-size: 12px; margin-top: 12px; white-space: pre-wrap; }
+    .placeholder {
+      background: var(--card); border:1px solid var(--border); border-radius: 16px; padding: 24px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.25); margin-top: 16px; color: var(--muted);
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script>
+    window.addEventListener('error', ev => {
+      const pre = document.getElementById('status'); if (pre) pre.textContent += '\\n[JS ERROR] ' + (ev.message || ev.error);
+    });
+    window.addEventListener('unhandledrejection', ev => {
+      const pre = document.getElementById('status'); if (pre) pre.textContent += '\\n[PROMISE REJECTION] ' + (ev.reason && (ev.reason.stack || ev.reason.message || ev.reason));
+    });
+  </script>
+</head>
+<body>
+  <nav class="sidebar">
+    <h2>Monki</h2>
+    <div class="menu-item"><a href="index.html">🏠 Home</a></div>
+    <div class="menu-item"><a href="sales.html">📊 Sales Dashboard</a></div>
+    <div class="menu-item"><a class="active" href="trends.html">📈 Trends</a></div>
+  </nav>
+
+  <div class="container">
+    <h1>Trends</h1>
+    <div class="subtitle">Filtros idénticos a Sales. Fechas interpretadas <b>solo</b> como DD/MM/YYYY (o DD-MM-YYYY / DD.MM.YYYY). Rango por defecto: últimos 30 días desde la última fecha válida.</div>
+
+    <div class="filters">
+      <div>
+        <label>Fecha inicio</label><br/>
+        <input id="startDate" type="date" />
+      </div>
+      <div>
+        <label>Fecha fin</label><br/>
+        <input id="endDate" type="date" />
+      </div>
+      <div>
+        <label>Producto</label><br/>
+        <select id="productFilter"></select>
+      </div>
+      <div>
+        <button id="applyBtn">Aplicar filtros</button>
+      </div>
+    </div>
+
+    <div class="placeholder">
+      <strong>Próximamente:</strong> aquí irán tus visualizaciones de tendencias (MA7, WoW, YoY, cohortes, etc.).
+    </div>
+
+    <div id="status" class="status"></div>
+    <div class="note">Fuentes: <code>headers.csv</code> + <code>reporte_utilidad.csv</code>. Encabezados del reporte se reemplazan por la primera fila de <code>headers.csv</code> (por posición).</div>
+  </div>
+
+<script>
+const HEADERS_FILE = 'headers.csv';
+const DATA_FILE    = 'reporte_utilidad.csv';
+
+// Columnas fijas (para posibles KPIs futuros)
+const COL_TOTAL_GROSS = 'total_purchase_per_product';
+const COL_INVOICE     = 'invoice';
+const COL_TOTAL_PURCH = 'total_purchase';
+const COL_CATEGORY    = 'category';
+const COL_QUANTITY    = 'quantity';
+const COL_GROSS_PROD  = 'gross_prodit';
+
+// Auto-detección
+const DATE_KEY_CANDIDATES = ['date','fecha','fecha_creacion','fecha creación'];
+const PRODUCT_KEY_CANDS   = ['product','producto','item','item_name','nombre_producto'];
+
+const statusEl = document.getElementById('status');
+function logStatus(msg){ statusEl.textContent += '\\n' + msg; }
+
+// Parser DD/MM/YYYY (acepta DD-MM-YYYY / DD.MM.YYYY + hora opcional)
+function parseDateDMYStrict(v) {
+  if (v instanceof Date) return v;
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  const m = s.match(/^\\s*(\\d{1,2})[\\/\\.\\-](\\d{1,2})[\\/\\.\\-](\\d{2,4})(?:\\s.*)?$/);
+  if (!m) return null;
+  let dd = parseInt(m[1], 10);
+  let mm = parseInt(m[2], 10);
+  let yy = m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10);
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  const d = new Date(yy, mm - 1, dd);
+  if (d.getFullYear() !== yy || d.getMonth() !== mm - 1 || d.getDate() !== dd) return null;
+  return d;
+}
+
+function fmtCOP(v){ return new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0}).format(v||0); }
+
+function findKey(headers, candidates){
+  const lower=headers.map(h=>String(h||'').trim().toLowerCase());
+  for(const c of candidates){
+    const i=lower.indexOf(c.toLowerCase());
+    if(i!==-1) return headers[i];
+  }
+  return null;
+}
+function num(x){
+  if(x==null) return 0;
+  if(typeof x==='number') return isFinite(x)?x:0;
+  if(typeof x==='string'){
+    const n=Number(x.replace(/[^0-9.-]/g,'')); return isFinite(n)?n:0;
+  }
+  return 0;
+}
+function parseCSV(url){
+  return new Promise((resolve,reject)=>{
+    Papa.parse(url+'?v='+Date.now(),{
+      download:true, header:false, dynamicTyping:false, skipEmptyLines:true,
+      complete:res=>resolve(res.data), error:err=>reject(err)
+    });
+  });
+}
+// ISO local (evita UTC shift)
+function isoLocal(d){
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0');
+  return y+'-'+m+'-'+day;
+}
+
+(async function init(){
+  try{
+    logStatus('Cargando CSV…');
+    const hdrRows  = await parseCSV(HEADERS_FILE);
+    const dataRows = await parseCSV(DATA_FILE);
+    if(!hdrRows.length) throw new Error('headers.csv vacío');
+    if(!dataRows.length) throw new Error('reporte_utilidad.csv vacío');
+
+    // Reemplazar encabezados por posición (headers.csv primera fila)
+    const canonical = hdrRows[0].map(x=>(x??'').toString());
+    const width = Math.max((dataRows[0]||[]).length, canonical.length);
+    dataRows[0] = Array.from({length: width}, (_,i)=> canonical[i] ?? (dataRows[0]||[])[i] ?? ('col'+(i+1)));
+
+    const headers = dataRows[0];
+    const rows = dataRows.slice(1).map(r=>{const o={}; headers.forEach((h,i)=>o[h]=r[i]); return o; });
+
+    // Keys
+    const dateKey    = findKey(headers, DATE_KEY_CANDIDATES) || headers[0];
+    const productKey = findKey(headers, PRODUCT_KEY_CANDS)   || 'product';
+
+    // Fechas
+    const parsedDates = rows.map(r => parseDateDMYStrict(r[dateKey]));
+    const invalidCount = parsedDates.filter(d => !d).length;
+    const dates = parsedDates.filter(Boolean).sort((a,b)=>a-b);
+    if(invalidCount > 0) logStatus(`Advertencia: ${invalidCount} filas con fecha inválida fueron ignoradas.`);
+    if(!dates.length) throw new Error('No hay fechas válidas en DD/MM/YYYY.');
+
+    const maxDate = dates[dates.length-1];
+    const minDefault = new Date(maxDate); minDefault.setDate(maxDate.getDate()-29);
+    document.getElementById('startDate').value = isoLocal(minDefault);
+    document.getElementById('endDate').value   = isoLocal(maxDate);
+
+    // Productos
+    const $prod = document.getElementById('productFilter');
+    const uniq = Array.from(new Set(rows.map(r=> (r[productKey]??'').toString().trim()))).filter(s=>s.length>0).sort((a,b)=>a.localeCompare(b));
+    const optAll = document.createElement('option'); optAll.value='__ALL__'; optAll.textContent='Todos los productos'; $prod.appendChild(optAll);
+    uniq.forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v; $prod.appendChild(o); });
+    $prod.value='__ALL__';
+
+    function applyFilters(){
+      const start = new Date(document.getElementById('startDate').value+'T00:00:00');
+      const end   = new Date(document.getElementById('endDate').value  +'T23:59:59');
+      const prod  = document.getElementById('productFilter').value;
+
+      const filteredRows = [];
+      const filteredDates = [];
+      rows.forEach((r, idx)=>{
+        const d = parsedDates[idx];
+        if(!d) return;
+        if(d < start || d > end) return;
+        if(prod !== '__ALL__'){
+          const p = (r[productKey]??'').toString().trim();
+          if(p !== prod) return;
+        }
+        filteredRows.push(r);
+        filteredDates.push(d);
+      });
+
+      // Por ahora, solo registramos cuántas filas pasan los filtros
+      logStatus(`Aplicado: ${filteredRows.length} filas dentro del rango/criterio.`);
+      // Aquí se insertarán futuras visualizaciones de tendencias
+    }
+
+    document.getElementById('applyBtn').addEventListener('click', applyFilters);
+    applyFilters();
+    logStatus('Listo. Página Trends con filtros replicados.');
+  }catch(e){
+    logStatus('Error: '+(e && e.message ? e.message : e));
+  }
+})();
+</script>
+</body>
+</html>

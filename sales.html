@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Monki — Sales Dashboard (Fechas DD/MM/YYYY estrictas)</title>
+  <title>Monki — Sales Dashboard</title>
   <style>
-    :root { --bg:#0f172a; --card:#111827; --muted:#94a3b8; --text:#e5e7eb; }
+    :root { --bg:#0f172a; --card:#111827; --muted:#94a3b8; --text:#e5e7eb; --border:#1f2937; }
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -15,7 +15,7 @@
       display: flex;
       min-height: 100vh;
     }
-    .sidebar { width:200px; background:#111827; border-right:1px solid #1f2937; padding:20px; }
+    .sidebar { width: 200px; background:#111827; border-right:1px solid var(--border); padding:20px; }
     .sidebar h2 { margin:0 0 12px; font-size:20px; }
     .menu-item { margin:10px 0; }
     .menu-item a { color:var(--text); text-decoration:none; font-size:16px; }
@@ -25,57 +25,139 @@
     .subtitle { color:var(--muted); margin-bottom:20px; }
     .filters {
       display:flex; flex-wrap:wrap; gap:12px; align-items:center;
-      background:var(--card); border:1px solid #1f2937; padding:12px; border-radius:12px; margin-bottom:16px;
+      background:var(--card); border:1px solid var(--border); padding:12px; border-radius:12px; margin-bottom:16px;
     }
     .filters label { color:var(--muted); font-size:14px; }
     .filters input, .filters select, .filters button {
-      background:#0b1220; color:var(--text); border:1px solid #1f2937; padding:8px 10px; border-radius:10px;
+      background:#0b1220; color:var(--text); border:1px solid var(--border); padding:8px 10px; border-radius:10px;
     }
-    .kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
-    @media (max-width:900px){ .kpis{ grid-template-columns:1fr; } }
-    .card { background:var(--card); border:1px solid #1f2937; border-radius:16px; padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.25); }
-    .kpi-title { color:var(--muted); font-size:13px; letter-spacing:.3px; }
-    .kpi-value { font-size:26px; font-weight:700; margin-top:6px; }
-    .note { color:var(--muted); font-size:12px; margin-top:12px; }
-    .status { color:var(--muted); font-size:12px; margin-top:12px; white-space:pre-wrap; }
+    .kpis { display:grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 900px){ .kpis { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--card); border:1px solid var(--border); border-radius: 16px; padding: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.25); margin-bottom: 16px;
+    }
+    .kpi-title { color: var(--muted); font-size: 13px; letter-spacing: .3px; }
+    .kpi-value { font-size: 26px; font-weight: 700; margin-top: 6px; }
+    .note { color: var(--muted); font-size: 12px; margin-top: 12px; }
+    .status { color: var(--muted); font-size: 12px; margin-top: 12px; white-space: pre-wrap; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; }
+    .menu-item a.active { text-decoration: underline; font-weight: 600; }
   </style>
+  <!-- libs -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+  <!-- logger de errores -->
+  <script>
+    window.addEventListener('error', ev => {
+      const pre = document.getElementById('status'); if (pre) pre.textContent += '\n[JS ERROR] ' + (ev.message || ev.error);
+    });
+    window.addEventListener('unhandledrejection', ev => {
+      const pre = document.getElementById('status'); if (pre) pre.textContent += '\n[PROMISE REJECTION] ' + (ev.reason && (ev.reason.stack || ev.reason.message || ev.reason));
+    });
+  </script>
 </head>
 <body>
   <nav class="sidebar">
     <h2>Monki</h2>
     <div class="menu-item"><a href="index.html">🏠 Home</a></div>
     <div class="menu-item"><a href="sales.html">📊 Sales Dashboard</a></div>
+    <div class="menu-item"><a href="trends.html">📈 Trends</a></div>
   </nav>
 
   <div class="container">
     <h1>Sales Dashboard</h1>
-    <div class="subtitle">Fechas CSV en <b>DD/MM/YYYY</b> estricto. Rango por defecto: últimos 30 días desde la última fecha válida.</div>
+    <div class="subtitle">Fechas del CSV interpretadas <b>solo</b> como DD/MM/YYYY (o DD-MM-YYYY / DD.MM.YYYY). Rango por defecto: últimos 30 días desde la última fecha válida.</div>
 
     <div class="filters">
-      <div><label>Fecha inicio</label><br/><input id="startDate" type="date" /></div>
-      <div><label>Fecha fin</label><br/><input id="endDate" type="date" /></div>
-      <div><label>Producto</label><br/><select id="productFilter"></select></div>
-      <div><button id="applyBtn">Aplicar filtros</button></div>
+      <div>
+        <label>Fecha inicio</label><br/>
+        <input id="startDate" type="date" />
+      </div>
+      <div>
+        <label>Fecha fin</label><br/>
+        <input id="endDate" type="date" />
+      </div>
+      <div>
+        <label>Producto</label><br/>
+        <select id="productFilter"></select>
+      </div>
+      <div>
+        <button id="applyBtn">Aplicar filtros</button>
+      </div>
     </div>
 
     <div class="kpis">
-      <div class="card"><div class="kpi-title">Total Sales (COP)</div><div id="k_totalSales" class="kpi-value">$0</div></div>
-      <div class="card"><div class="kpi-title">Total Invoices</div><div id="k_totalInvoices" class="kpi-value">0</div></div>
-      <div class="card"><div class="kpi-title">Average Ticket (COP / invoice)</div><div id="k_avgTicket" class="kpi-value">$0</div></div>
-      <div class="card"><div class="kpi-title">Total Icecreams (units)</div><div id="k_totalIcecreams" class="kpi-value">0</div></div>
-      <div class="card"><div class="kpi-title">Avg Toppings per Icecream</div><div id="k_avgToppings" class="kpi-value">0</div></div>
-      <div class="card"><div class="kpi-title">Average Net Profit (%)</div><div id="k_avgNetProfit" class="kpi-value">0%</div></div>
+      <div class="card">
+        <div class="kpi-title">Total Sales (COP)</div>
+        <div id="k_totalSales" class="kpi-value">$0</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Total Invoices</div>
+        <div id="k_totalInvoices" class="kpi-value">0</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Average Ticket (COP / invoice)</div>
+        <div id="k_avgTicket" class="kpi-value">$0</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Total Icecreams (units)</div>
+        <div id="k_totalIcecreams" class="kpi-value">0</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Avg Toppings per Icecream</div>
+        <div id="k_avgToppings" class="kpi-value">0</div>
+      </div>
+      <div class="card">
+        <div class="kpi-title">Average Net Profit (%)</div>
+        <div id="k_avgNetProfit" class="kpi-value">0%</div>
+      </div>
+    </div>
+
+    <!-- Top 5 productos -->
+    <div class="card">
+      <h2 style="margin:0 0 8px;">Top 10 productos por ventas</h2>
+      <div class="note">Ordenado por total COP (total_purchase_per_product); incluye unidades vendidas.</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th>Total vendido (COP)</th>
+            <th>Unidades</th>
+          </tr>
+        </thead>
+        <tbody id="topProductsBody">
+          <tr><td colspan="3" style="color:var(--muted);">Sin datos…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Promedio de ventas por día de la semana -->
+    <div class="card">
+      <h2 style="margin:0 0 8px;">Promedio de ventas diarias por día de la semana</h2>
+      <div class="note">Cada barra es el promedio de <b>total_purchase_per_product</b> por día (Lun → Dom) dentro del rango filtrado.</div>
+      <canvas id="weekdayChart" height="120"></canvas>
     </div>
 
     <div id="status" class="status"></div>
-    <div class="note">Usa: <code>headers.csv</code> + <code>reporte_utilidad.csv</code> en el mismo folder. Las fechas se interpretan solo como DD/MM/YYYY (o DD-MM-YYYY / DD.MM.YYYY). Total Sales usa <code>total_purchase_per_product</code>.</div>
+    <div class="note">Fuentes: <code>headers.csv</code> + <code>reporte_utilidad.csv</code>. Encabezados del reporte se reemplazan por la primera fila de <code>headers.csv</code> (por posición). <b>Total Sales</b> usa <code>total_purchase_per_product</code>. <b>Average Ticket</b> = promedio de <code>total_purchase</code> por <u>invoice único</u> del conjunto filtrado.</div>
+
+    <!-- Pie Chart productos -->
+    <div class="card">
+      <h2 style="margin:0 0 8px;">Distribución de Ventas por Producto</h2>
+      <div class="note">Top 10 productos más vendidos por COP. El resto se agrupa en "Otros".</div>
+      <canvas id="pieChart" height="200"></canvas>
+    </div>
   </div>
 
 <script>
-const HEADERS_FILE='headers.csv';
-const DATA_FILE='reporte_utilidad.csv';
+const HEADERS_FILE = 'headers.csv';
+const DATA_FILE    = 'reporte_utilidad.csv';
 
+// Columnas fijas
 const COL_TOTAL_GROSS = 'total_purchase_per_product';
 const COL_INVOICE     = 'invoice';
 const COL_TOTAL_PURCH = 'total_purchase';
@@ -83,17 +165,20 @@ const COL_CATEGORY    = 'category';
 const COL_QUANTITY    = 'quantity';
 const COL_GROSS_PROD  = 'gross_prodit';
 
+
+// Auto-detección
 const DATE_KEY_CANDIDATES = ['date','fecha','fecha_creacion','fecha creación'];
 const PRODUCT_KEY_CANDS   = ['product','producto','item','item_name','nombre_producto'];
 
 const statusEl = document.getElementById('status');
 function logStatus(msg){ statusEl.textContent += '\n' + msg; }
 
+// Parser DD/MM/YYYY (acepta DD-MM-YYYY / DD.MM.YYYY + hora opcional)
 function parseDateDMYStrict(v) {
   if (v instanceof Date) return v;
   if (typeof v !== 'string') return null;
   const s = v.trim();
-  const m = s.match(/^\s*(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})(?:\s.*)?$/);
+  const m = s.match(/^\s*(\d{1,2})[\/\.\-](\d{1,2})[\/\.\-](\d{2,4})(?:\s.*)?$/);
   if (!m) return null;
   let dd = parseInt(m[1], 10);
   let mm = parseInt(m[2], 10);
@@ -106,9 +191,23 @@ function parseDateDMYStrict(v) {
 
 function fmtCOP(v){ return new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0}).format(v||0); }
 function fmtPct(v){ return (v||0).toFixed(1).replace('.',',') + '%'; }
-function findKey(headers, cands){ const lower=headers.map(h=>String(h||'').trim().toLowerCase()); for(const c of cands){ const i=lower.indexOf(c.toLowerCase()); if(i!==-1) return headers[i]; } return null; }
-function num(x){ if(x==null)return 0; if(typeof x==='number')return isFinite(x)?x:0; if(typeof x==='string'){const n=Number(x.replace(/[^0-9.-]/g,'')); return isFinite(n)?n:0;} return 0; }
 
+function findKey(headers, candidates){
+  const lower=headers.map(h=>String(h||'').trim().toLowerCase());
+  for(const c of candidates){
+    const i=lower.indexOf(c.toLowerCase());
+    if(i!==-1) return headers[i];
+  }
+  return null;
+}
+function num(x){
+  if(x==null) return 0;
+  if(typeof x==='number') return isFinite(x)?x:0;
+  if(typeof x==='string'){
+    const n=Number(x.replace(/[^0-9.-]/g,'')); return isFinite(n)?n:0;
+  }
+  return 0;
+}
 function parseCSV(url){
   return new Promise((resolve,reject)=>{
     Papa.parse(url+'?v='+Date.now(),{
@@ -117,17 +216,24 @@ function parseCSV(url){
     });
   });
 }
+// ISO local (evita UTC shift)
+function isoLocal(d){
+  const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0');
+  return y+'-'+m+'-'+day;
+}
 
-// ISO local sin UTC shift
-function isoLocal(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0'); return y+'-'+m+'-'+day; }
+let weekdayChart = null;
+let pieChart = null;
 
 (async function init(){
   try{
+    logStatus('Cargando CSV…');
     const hdrRows  = await parseCSV(HEADERS_FILE);
     const dataRows = await parseCSV(DATA_FILE);
     if(!hdrRows.length) throw new Error('headers.csv vacío');
     if(!dataRows.length) throw new Error('reporte_utilidad.csv vacío');
 
+    // Reemplazar encabezados por posición (headers.csv primera fila)
     const canonical = hdrRows[0].map(x=>(x??'').toString());
     const width = Math.max((dataRows[0]||[]).length, canonical.length);
     dataRows[0] = Array.from({length: width}, (_,i)=> canonical[i] ?? (dataRows[0]||[])[i] ?? ('col'+(i+1)));
@@ -135,19 +241,23 @@ function isoLocal(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart
     const headers = dataRows[0];
     const rows = dataRows.slice(1).map(r=>{const o={}; headers.forEach((h,i)=>o[h]=r[i]); return o; });
 
+    // Keys
     const dateKey    = findKey(headers, DATE_KEY_CANDIDATES) || headers[0];
     const productKey = findKey(headers, PRODUCT_KEY_CANDS)   || 'product';
 
+    // Fechas
     const parsedDates = rows.map(r => parseDateDMYStrict(r[dateKey]));
     const invalidCount = parsedDates.filter(d => !d).length;
     const dates = parsedDates.filter(Boolean).sort((a,b)=>a-b);
-    if(!dates.length) throw new Error('No hay fechas válidas DD/MM/YYYY.');
+    if(invalidCount > 0) logStatus(`Advertencia: ${invalidCount} filas con fecha inválida fueron ignoradas.`);
+    if(!dates.length) throw new Error('No hay fechas válidas en DD/MM/YYYY.');
 
     const maxDate = dates[dates.length-1];
     const minDefault = new Date(maxDate); minDefault.setDate(maxDate.getDate()-29);
     document.getElementById('startDate').value = isoLocal(minDefault);
     document.getElementById('endDate').value   = isoLocal(maxDate);
 
+    // Productos
     const $prod = document.getElementById('productFilter');
     const uniq = Array.from(new Set(rows.map(r=> (r[productKey]??'').toString().trim()))).filter(s=>s.length>0).sort((a,b)=>a.localeCompare(b));
     const optAll = document.createElement('option'); optAll.value='__ALL__'; optAll.textContent='Todos los productos'; $prod.appendChild(optAll);
@@ -159,34 +269,41 @@ function isoLocal(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart
       const end   = new Date(document.getElementById('endDate').value  +'T23:59:59');
       const prod  = document.getElementById('productFilter').value;
 
-      const filtered = rows.filter((r, idx)=>{
+      const filteredRows = [];
+      const filteredDates = [];
+      rows.forEach((r, idx)=>{
         const d = parsedDates[idx];
-        if(!d) return false;
-        if(d < start || d > end) return false;
+        if(!d) return;
+        if(d < start || d > end) return;
         if(prod !== '__ALL__'){
           const p = (r[productKey]??'').toString().trim();
-          if(p !== prod) return false;
+          if(p !== prod) return;
         }
-        return true;
+        filteredRows.push(r);
+        filteredDates.push(d);
       });
 
-      computeKPIs(filtered);
+      computeKPIs(filteredRows);
+      renderTopProducts(filteredRows);
+      renderWeekdayChart(filteredRows, filteredDates);
+      renderPieChart(filteredRows);
     }
 
     function computeKPIs(data){
-      let totalSalesCOP=0, totalIcecreams=0, totalToppings=0, sumGrossProdit=0;
-      const invoices = new Set();
-      const invoicePurchase = new Map();
+      let totalSalesCOP = 0, totalIcecreams = 0, totalToppings = 0, sumGrossProdit = 0;
+
+      // Invoice único -> total_purchase
+      const invoiceToPurchase = new Map();
 
       for(const r of data){
         totalSalesCOP += num(r[COL_TOTAL_GROSS]);
         sumGrossProdit += num(r[COL_GROSS_PROD]);
 
-        const inv = (r[COL_INVOICE]??'').toString();
-        if(inv) invoices.add(inv);
-
-        const tp = num(r[COL_TOTAL_PURCH]);
-        if(inv) invoicePurchase.set(inv, tp);
+        const inv = (r[COL_INVOICE]??'').toString().trim();
+        if(inv){
+          const tp = num(r[COL_TOTAL_PURCH]);
+          if(!invoiceToPurchase.has(inv)) invoiceToPurchase.set(inv, tp);
+        }
 
         const cat = (r[COL_CATEGORY]??'').toString().trim().toLowerCase();
         const qty = num(r[COL_QUANTITY]);
@@ -194,14 +311,11 @@ function isoLocal(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart
         else if(cat === 'toppings') totalToppings += qty;
       }
 
-      const totalInvoices = invoices.size;
-      let avgTicket = 0;
-      if(totalInvoices>0){
-        let s=0; for(const inv of invoices){ s += (invoicePurchase.get(inv)||0); }
-        avgTicket = s/totalInvoices;
-      }
-      const avgToppings = totalIcecreams>0 ? (totalToppings/totalIcecreams) : 0;
-      const avgNetProfitPct = totalSalesCOP>0 ? (sumGrossProdit/totalSalesCOP)*100 : 0;
+      const totalInvoices = invoiceToPurchase.size;
+      const invoiceValues = [...invoiceToPurchase.values()];
+      const avgTicket = totalInvoices ? (invoiceValues.reduce((a,b)=>a+b,0) / totalInvoices) : 0;
+      const avgToppings = totalIcecreams > 0 ? (totalToppings / totalIcecreams) : 0;
+      const avgNetProfitPct = totalSalesCOP > 0 ? (sumGrossProdit / totalSalesCOP) * 100 : 0;
 
       document.getElementById('k_totalSales').textContent     = fmtCOP(totalSalesCOP);
       document.getElementById('k_totalInvoices').textContent  = totalInvoices.toLocaleString('es-CO');
@@ -211,9 +325,155 @@ function isoLocal(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart
       document.getElementById('k_avgNetProfit').textContent   = fmtPct(avgNetProfitPct);
     }
 
+    function renderTopProducts(data){
+      const byProduct = new Map(); // name -> {cop, qty}
+      data.forEach(r=>{
+        const name = (r['product'] ?? r['producto'] ?? r['item'] ?? r['item_name'] ?? r['nombre_producto'] ?? '').toString().trim();
+        if(!name) return;
+        const acc = byProduct.get(name) || {cop:0, qty:0};
+        acc.cop += num(r[COL_TOTAL_GROSS]);
+        acc.qty += num(r[COL_QUANTITY]);
+        byProduct.set(name, acc);
+      });
+      const top = Array.from(byProduct.entries()).sort((a,b)=> b[1].cop - a[1].cop).slice(0,10);
+
+      const tbody = document.getElementById('topProductsBody');
+      tbody.innerHTML = '';
+      if(top.length === 0){
+        tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted);">Sin datos…</td></tr>';
+        return;
+      }
+      top.forEach(([name, v])=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${name}</td><td>${fmtCOP(v.cop)}</td><td>${v.qty.toLocaleString('es-CO')}</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderWeekdayChart(data, dates){
+      const perDay = new Map(); // dateISO -> sumCOP
+      data.forEach((r, idx)=>{
+        const d = dates[idx];
+        const iso = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+        perDay.set(iso, (perDay.get(iso) || 0) + num(r[COL_TOTAL_GROSS]));
+      });
+
+      // Promedio por día de semana (Lun..Dom)
+      const order = [1,2,3,4,5,6,0];
+      const labels = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+      const sums = new Array(7).fill(0);
+      const counts = new Array(7).fill(0);
+
+      for(const [iso, val] of perDay.entries()){
+        const [y,m,dd] = iso.split('-').map(n=>parseInt(n,10));
+        const d = new Date(y, m-1, dd);
+        const wd = d.getDay(); // 0=Dom..6=Sáb
+        const idx = order.indexOf(wd);
+        sums[idx] += val;
+        counts[idx] += 1;
+      }
+      const avgs = sums.map((s,i)=> counts[i] ? s / counts[i] : 0);
+
+      const ctx = document.getElementById('weekdayChart');
+
+      // Plugin opcional
+      const pluginsArr = [];
+      const hasDataLabels = !!(window.ChartDataLabels);
+      if (hasDataLabels) pluginsArr.push(ChartDataLabels);
+
+      const opts = {
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: (ctx)=> fmtCOP(ctx.parsed.y) } }
+        },
+        scales: { y: { ticks: { callback: (v)=> fmtCOP(v) } } }
+      };
+      if (hasDataLabels) {
+        opts.plugins.datalabels = {
+          anchor: 'end',
+          align: 'end',
+          formatter: (v)=> fmtCOP(v),
+          clamp: true
+        };
+      }
+
+      if(weekdayChart){
+        weekdayChart.data.labels = labels;
+        weekdayChart.data.datasets[0].data = avgs;
+        weekdayChart.update();
+      } else {
+        weekdayChart = new Chart(ctx, {
+          type: 'bar',
+          data: { labels, datasets: [{ label: 'Promedio COP por día', data: avgs }] },
+          options: opts,
+          plugins: pluginsArr
+        });
+      }
+    }
+
+    function renderPieChart(data) {
+
+      // Agrupa COP por producto
+      const byProd = new Map();
+      data.forEach(r => {
+        const name = (r['product'] ?? r['producto'] ?? r['item'] ?? r['item_name'] ?? r['nombre_producto'] ?? '').toString().trim();
+        if (!name) return;
+
+        const acc = byProd.get(name) || 0;
+        byProd.set(name, acc + num(r[COL_TOTAL_GROSS]));
+      });
+
+      // Ordenar por total desc
+      const sorted = Array.from(byProd.entries()).sort((a,b)=>b[1]-a[1]);
+
+      // Top 10 + Otros
+      const top10 = sorted.slice(0,10);
+      const rest = sorted.slice(10);
+
+      const labels = top10.map(x => x[0]);
+      const values = top10.map(x => x[1]);
+
+      if (rest.length > 0) {
+        const othersSum = rest.reduce((acc, x) => acc + x[1], 0);
+        labels.push("Otros");
+        values.push(othersSum);
+      }
+
+      const ctx = document.getElementById("pieChart");
+
+      if (pieChart) {
+        pieChart.data.labels = labels;
+        pieChart.data.datasets[0].data = values;
+        pieChart.update();
+      } else {
+        pieChart = new Chart(ctx, {
+          type: "pie",
+          data: {
+            labels,
+            datasets: [{
+              label: "COP",
+              data: values
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              tooltip: {
+                callbacks: {
+                  label: (ctx)=> `${ctx.label}: ${fmtCOP(ctx.parsed)}`
+                }
+              }
+            }
+          }
+        });
+      }
+    }
+
+
     document.getElementById('applyBtn').addEventListener('click', applyFilters);
     applyFilters();
-    logStatus('OK: datos cargados y KPIs calculados.');
+    logStatus('Listo. Top 10 productos y promedio por día de la semana agregados. (Datalabels opcional)');
   }catch(e){
     logStatus('Error: '+(e && e.message ? e.message : e));
   }
