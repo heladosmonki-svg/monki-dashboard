@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Monki — Dashboard de Ventas</title>
+  <title>Monki — Dashboard de Ventas (CSV)</title>
   <style>
     :root { --bg:#0f172a; --card:#111827; --muted:#94a3b8; --text:#e5e7eb; }
     * { box-sizing: border-box; }
@@ -32,24 +32,18 @@
     @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
   </style>
 
-  <!-- 1) SheetJS (XLSX) -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.20.0/dist/xlsx.full.min.js"></script>
-  <script>
-    // Fallback to unpkg if jsDelivr is blocked
-    if (!window.XLSX) {
-      document.write('<script src="https://unpkg.com/xlsx@0.20.0/dist/xlsx.full.min.js"><\/script>');
-    }
-  </script>
-
-  <!-- 2) Chart.js -->
+  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- PapaParse for robust CSV parsing (auto delimiter detection, quoted fields, etc.) -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 </head>
 <body>
   <div class="container">
-    <h1>Dashboard de Ventas — Monki</h1>
+    <h1>Dashboard de Ventas — Monki (CSV)</h1>
     <div class="subtitle">
-      Este panel lee <code>headers.xlsx</code> (primera fila = encabezados canónicos) y
-      <code>reporte_utilidad.xlsx</code> (datos). Reemplaza los encabezados del reporte por posición y calcula totales de <strong>1</strong>, <strong>7</strong> y <strong>30</strong> días.
+      <strong>headers.csv</strong> (primera fila = encabezados canónicos por posición) +
+      <strong>reporte_utilidad.csv</strong> (datos).<br>
+      El panel reemplaza los headers del reporte con los de <code>headers.csv</code> y calcula totales de <b>1</b>, <b>7</b> y <b>30</b> días.
     </div>
 
     <div class="controls">
@@ -62,28 +56,20 @@
       <div class="card">
         <div class="kpi-title">Total ventas último día</div>
         <div id="kpi1" class="kpi-value">$0</div>
-        <div class="legend">Incluye impuestos (bruto)</div>
       </div>
       <div class="card">
         <div class="kpi-title">Total ventas últimos 7 días</div>
         <div id="kpi7" class="kpi-value">$0</div>
-        <div class="legend">Incluye impuestos (bruto)</div>
       </div>
       <div class="card">
         <div class="kpi-title">Total ventas últimos 30 días</div>
         <div id="kpi30" class="kpi-value">$0</div>
-        <div class="legend">Incluye impuestos (bruto)</div>
       </div>
     </div>
 
     <div class="card chart-card">
       <div class="kpi-title">Ventas diarias</div>
       <canvas id="chart"></canvas>
-      <div class="legend">
-        La detección de columnas usa candidatos.<br>
-        <strong>Fecha</strong> candidatos: <code>date</code>, <code>fecha</code>, <code>fecha_creacion</code>, <code>fecha creación</code><br>
-        <strong>Ventas (bruto por línea)</strong> candidatos: <code>total</code>, <code>total_purchase_per_product</code>, <code>total_gross</code>, <code>Total.1</code>, <code>total_purchase</code>
-      </div>
     </div>
 
     <div class="card" style="margin-top:16px;">
@@ -93,204 +79,177 @@
     </div>
 
     <div class="footer">
-      Estructura del repo (raíz): <code>index.html</code>, <code>reporte_utilidad.xlsx</code>, <code>headers.xlsx</code>.
+      Coloca en la raíz del repo: <code>index.html</code>, <code>headers.csv</code>, <code>reporte_utilidad.csv</code>.
     </div>
   </div>
 
-  <!-- 3) Your dashboard code (runs after libraries) -->
-  <script>
-    const EXCEL_FILE   = 'reporte_utilidad.xlsx';
-    const HEADERS_FILE = 'headers.xlsx';
+<script>
+  const HEADERS_FILE = 'headers.csv';
+  const DATA_FILE    = 'reporte_utilidad.csv';
 
-    const DATE_KEY_CANDIDATES  = ['date', 'fecha', 'fecha_creacion', 'fecha creación'];
-    const SALES_KEY_CANDIDATES = ['total', 'total_purchase_per_product', 'total_gross', 'total.1', 'total_purchase'];
+  // After header replacement, try these keys. Default sales uses the line-total incl. taxes: total_purchase_per_product.
+  const DATE_KEY_CANDIDATES  = ['date','fecha','fecha_creacion','fecha creación'];
+  const SALES_KEY_CANDIDATES = ['total_purchase_per_product','total','total_gross','total.1','total_purchase'];
 
-    const statusDiv = document.getElementById('status');
-    const logEl = document.getElementById('log');
-    const log = (...args) => { logEl.textContent += args.join(' ') + '\\n'; };
-    const setStatus = (html, cls='') => { statusDiv.innerHTML = html; statusDiv.className = 'legend ' + cls; };
+  const statusDiv = document.getElementById('status');
+  const logEl     = document.getElementById('log');
+  const log       = (...a) => logEl.textContent += a.join(' ') + '\\n';
+  const setStatus = (t,c='') => { statusDiv.innerHTML=t; statusDiv.className='legend '+c; };
 
-    const fmtCOP = (v) => new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(v || 0);
+  const fmtCOP = v => new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',maximumFractionDigits:0}).format(v||0);
 
-    function ymd(d) {
-      const yyyy = d.getFullYear(); const mm = String(d.getMonth() + 1).padStart(2,'0'); const dd = String(d.getDate()).padStart(2,'0');
-      return `${yyyy}-${mm}-${dd}`;
-    }
+  function ymd(d){
+    const yyyy=d.getFullYear(), mm=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
 
-    function parseDate(val) {
-      if (val instanceof Date) return val;
-      if (typeof val === 'number') { // Excel serial
-        const epoch = new Date(Date.UTC(1899, 11, 30));
-        return new Date(epoch.getTime() + val * 86400000);
+  function parseDate(v){
+    if(v instanceof Date) return v;
+    if(typeof v==='number') return new Date(v);
+    if(typeof v==='string'){
+      // Try ISO/US first
+      let t=Date.parse(v);
+      if(!isNaN(t)) return new Date(t);
+      // Try DD/MM/YYYY
+      const m=v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if(m){
+        const d=Number(m[1]), mo=Number(m[2]), y=Number(m[3]);
+        return new Date(y, mo-1, d);
       }
-      if (typeof val === 'string') {
-        const t = Date.parse(val);
-        if (!isNaN(t)) return new Date(t);
-        const m1 = val.match(/^(\d{4})-(\d{2})-(\d{2})/);
-        if (m1) return new Date(`${m1[1]}-${m1[2]}-${m1[3]}T00:00:00`);
-        const m2 = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-        if (m2) return new Date(`${m2[3]}-${m2[2].padStart(2,'0')}-${m2[1].padStart(2,'0')}T00:00:00`);
-      }
-      return null;
     }
+    return null;
+  }
 
-    function aoaToObjects(rows) {
-      if (!rows || !rows.length) return [];
-      const headers = (rows[0] || []).map(h => (h ?? '').toString());
-      const out = [];
-      for (let i = 1; i < rows.length; i++) {
-        const r = rows[i] || [];
-        const obj = {};
-        for (let j = 0; j < headers.length; j++) obj[headers[j]] = r[j];
-        out.push(obj);
-      }
-      return out;
+  function aoaToObjects(rows){
+    if(!rows.length) return [];
+    const headers = rows[0].map(h => (h ?? '').toString());
+    return rows.slice(1).map(r => {
+      const o={};
+      headers.forEach((h,i)=>o[h]=r[i]);
+      return o;
+    });
+  }
+
+  function findKey(headers,cands){
+    const lower = headers.map(h=>String(h||'').trim().toLowerCase());
+    for(const c of cands){
+      const i = lower.indexOf(c.toLowerCase());
+      if(i!==-1) return headers[i];
     }
+    return null;
+  }
 
-    function findKey(headers, candidates) {
-      const lower = headers.map(h => (h||'').toString().trim().toLowerCase());
-      for (const c of candidates) {
-        const idx = lower.indexOf(c.toLowerCase());
-        if (idx !== -1) return headers[idx];
-      }
-      return null;
+  function replaceHeaders(dataRows, canonical){
+    if(!dataRows.length) return dataRows;
+    const width = Math.max(dataRows[0].length, canonical.length);
+    const newH=[];
+    for(let i=0;i<width;i++) newH[i]=canonical[i]??dataRows[0][i]??('col'+(i+1));
+    dataRows[0]=newH;
+    return dataRows;
+  }
+
+  function buildDaily(rows,dateKey,salesKey){
+    const m=new Map();
+    for(const r of rows){
+      const d=parseDate(r[dateKey]);
+      if(!d) continue;
+      let v=r[salesKey];
+      if(v==null) continue;
+      if(typeof v==='string') v=Number(v.replace(/[^0-9.-]/g,'')); // strip $ and thousand separators
+      if(!isFinite(v)) continue;
+      const ds=ymd(new Date(d.getFullYear(),d.getMonth(),d.getDate()));
+      m.set(ds,(m.get(ds)||0)+v);
     }
+    return [...m.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
+  }
 
-    async function fetchArrayBuffer(url) {
-      const u = url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
-      log('Fetching:', u);
-      const resp = await fetch(u, { cache: 'no-store' });
-      if (!resp.ok) throw new Error('HTTP ' + resp.status + ' ' + resp.statusText);
-      return await resp.arrayBuffer();
+  function sumWindow(entries,endStr,days){
+    const end=new Date(endStr+'T00:00:00');
+    const start=new Date(end);
+    start.setDate(end.getDate()-(days-1));
+    let s=0;
+    for(const[ds,v] of entries){
+      const d=new Date(ds+'T00:00:00');
+      if(d>=start&&d<=end) s+=v;
     }
+    return s;
+  }
 
-    async function loadAoaFromXlsx(url) {
-      if (!window.XLSX) throw new Error('XLSX no está disponible. Verifica que la librería cargó.');
-      const buf = await fetchArrayBuffer(url);
-      const wb = XLSX.read(buf, { type: 'array', cellDates: true });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
-      return rows;
-    }
+  function populateDates(entries){
+    const sel=document.getElementById('endDate');
+    sel.innerHTML='';
+    entries.forEach(([ds])=>{
+      const o=document.createElement('option');
+      o.value=ds; o.textContent=ds;
+      sel.appendChild(o);
+    });
+    if(entries.length) sel.value=entries[entries.length-1][0];
+    document.getElementById('lastDate').textContent=entries.length?'Última fecha: '+entries[entries.length-1][0]:'';
+  }
 
-    function replaceHeadersByPosition(dataRows, canonicalHeaders) {
-      if (!dataRows.length) return dataRows;
-      const width = Math.max((dataRows[0] || []).length, canonicalHeaders.length);
-      const newHeader = [];
-      for (let i = 0; i < width; i++) newHeader[i] = canonicalHeaders[i] ?? (dataRows[0][i] ?? ('col' + (i+1)));
-      dataRows[0] = newHeader;
-      return dataRows;
-    }
+  let chart;
+  function renderChart(entries){
+    const ctx=document.getElementById('chart');
+    const labels=entries.map(e=>e[0]);
+    const data  =entries.map(e=>e[1]);
+    if(chart) chart.destroy();
+    chart=new Chart(ctx,{
+      type:'line',
+      data:{labels,datasets:[{label:'Ventas diarias (COP)',data,tension:0.2}]},
+      options:{responsive:true,plugins:{legend:{display:false}},scales:{
+        x:{ticks:{autoSkip:true,maxTicksLimit:10}},y:{beginAtZero:true}
+      }}
+    });
+  }
 
-    function buildDaily(rows, dateKey, salesKey) {
-      const daily = new Map();
-      for (const r of rows) {
-        const d = parseDate(r[dateKey]);
-        let v = r[salesKey];
-        if (d == null || v == null) continue;
-        if (typeof v === 'string') v = Number(v.replace(/[^\d.-]/g, ''));
-        if (!isFinite(v)) continue;
-        const ds = ymd(new Date(d.getFullYear(), d.getMonth(), d.getDate()));
-        daily.set(ds, (daily.get(ds) || 0) + v);
-      }
-      return Array.from(daily.entries()).sort((a,b) => a[0].localeCompare(b[0]));
-    }
+  function refreshKpis(entries){
+    const endStr=document.getElementById('endDate').value;
+    document.getElementById('kpi1').textContent = fmtCOP(sumWindow(entries,endStr,1));
+    document.getElementById('kpi7').textContent = fmtCOP(sumWindow(entries,endStr,7));
+    document.getElementById('kpi30').textContent= fmtCOP(sumWindow(entries,endStr,30));
+  }
 
-    function sumWindow(entries, endStr, days) {
-      const end = new Date(endStr + 'T00:00:00');
-      const start = new Date(end); start.setDate(end.getDate() - (days - 1));
-      let sum = 0;
-      for (const [ds, v] of entries) {
-        const d = new Date(ds + 'T00:00:00');
-        if (d >= start && d <= end) sum += v;
-      }
-      return sum;
-    }
-
-    function populateDates(entries) {
-      const sel = document.getElementById('endDate');
-      sel.innerHTML = '';
-      for (const [ds] of entries) {
-        const opt = document.createElement('option'); opt.value = ds; opt.textContent = ds; sel.appendChild(opt);
-      }
-      if (entries.length) sel.value = entries[entries.length - 1][0];
-      document.getElementById('lastDate').textContent = entries.length ? `Última fecha: ${entries[entries.length - 1][0]}` : '';
-    }
-
-    let chart;
-    function renderChart(entries) {
-      const ctx = document.getElementById('chart');
-      const labels = entries.map(e => e[0]);
-      const data = entries.map(e => e[1]);
-      if (chart) chart.destroy();
-      chart = new Chart(ctx, {
-        type: 'line',
-        data: { labels, datasets: [{ label: 'Ventas diarias (COP)', data, tension: 0.2 }]},
-        options: {
-          responsive: true, plugins: { legend: { display: false } },
-          scales: { x: { ticks: { autoSkip: true, maxTicksLimit: 10 } }, y: { beginAtZero: true } }
-        }
+  function parseCSV(url){
+    return new Promise((resolve,reject)=>{
+      Papa.parse(url+'?v='+Date.now(),{
+        download:true, header:false, dynamicTyping:false, skipEmptyLines:true,
+        complete: res => resolve(res.data),
+        error: err => reject(err)
       });
+    });
+  }
+
+  (async function init(){
+    try{
+      setStatus('Cargando CSV…');
+      const hdrRows  = await parseCSV(HEADERS_FILE);
+      const dataRows = await parseCSV(DATA_FILE);
+
+      if(!hdrRows.length) throw new Error('headers.csv está vacío.');
+      if(!dataRows.length) throw new Error('reporte_utilidad.csv está vacío.');
+
+      replaceHeaders(dataRows, hdrRows[0]);
+      const rows = aoaToObjects(dataRows);
+      const headers = Object.keys(rows[0]||{});
+      const dateKey  = findKey(headers, DATE_KEY_CANDIDATES)  || headers[0];
+      const salesKey = findKey(headers, SALES_KEY_CANDIDATES) || headers.find(h=>String(h).toLowerCase().includes('total')) || headers[1];
+
+      const entries = buildDaily(rows,dateKey,salesKey);
+      if(!entries.length){ setStatus('No se encontraron filas con datos válidos.', 'warn'); return; }
+
+      populateDates(entries);
+      renderChart(entries);
+      refreshKpis(entries);
+      document.getElementById('endDate').addEventListener('change', ()=>refreshKpis(entries));
+
+      setStatus('OK', 'ok');
+      log('Headers usados:', headers.join(' | '));
+      log('Columna fecha →', dateKey, ' • Columna ventas →', salesKey);
+    }catch(e){
+      setStatus('Error: '+e.message, 'err');
+      log('Error:', e.stack || e.message);
     }
-
-    function refreshKpis(entries) {
-      const endStr = document.getElementById('endDate').value;
-      document.getElementById('kpi1').textContent  = fmtCOP(sumWindow(entries, endStr, 1));
-      document.getElementById('kpi7').textContent  = fmtCOP(sumWindow(entries, endStr, 7));
-      document.getElementById('kpi30').textContent = fmtCOP(sumWindow(entries, endStr, 30));
-    }
-
-    (async function init() {
-      try {
-        setStatus('Cargando headers y datos…');
-        // 1) Load canonical headers
-        const hdrAoa = await loadAoaFromXlsx(HEADERS_FILE);
-        if (!hdrAoa.length) throw new Error('headers.xlsx está vacío.');
-        const canonicalHeaders = (hdrAoa[0] || []).map(x => (x ?? '').toString());
-        log('Headers canónicos:', canonicalHeaders.join(' | '));
-
-        // 2) Load data and replace header row by position
-        const dataAoa = await loadAoaFromXlsx(EXCEL_FILE);
-        if (!dataAoa.length) throw new Error('reporte_utilidad.xlsx está vacío.');
-        const origHeaders = (dataAoa[0] || []).map(x => (x ?? '').toString());
-        log('Headers originales:', origHeaders.join(' | '));
-
-        replaceHeadersByPosition(dataAoa, canonicalHeaders);
-        const rows = (function(rows) {
-          if (!rows || !rows.length) return [];
-          const headers = rows[0].map(h => (h ?? '').toString());
-          const out = [];
-          for (let i = 1; i < rows.length; i++) {
-            const r = rows[i] || [];
-            const obj = {};
-            for (let j = 0; j < headers.length; j++) obj[headers[j]] = r[j];
-            out.push(obj);
-          }
-          return out;
-        })(dataAoa);
-
-        const effectiveHeaders = Object.keys(rows[0] || {});
-        log('Headers efectivos:', effectiveHeaders.join(' | '));
-
-        // 3) Detect keys
-        const dateKey  = findKey(effectiveHeaders, DATE_KEY_CANDIDATES)  || effectiveHeaders[0];
-        const salesKey = findKey(effectiveHeaders, SALES_KEY_CANDIDATES) || effectiveHeaders.find(h => h.toLowerCase().includes('total')) || effectiveHeaders[1];
-        log('Usando columnas → fecha:', dateKey, ', ventas:', salesKey);
-
-        // 4) Build aggregates + chart
-        const entries = buildDaily(rows, dateKey, salesKey);
-        if (!entries.length) { setStatus('No se encontraron filas con datos válidos.', 'warn'); return; }
-
-        populateDates(entries);
-        renderChart(entries);
-        refreshKpis(entries);
-        document.getElementById('endDate').addEventListener('change', () => refreshKpis(entries));
-        setStatus('OK', 'ok');
-      } catch (e) {
-        setStatus('Error: ' + e.message, 'err');
-        log('Error:', e.stack || e.message);
-      }
-    })();
-  </script>
+  })();
+</script>
 </body>
 </html>
